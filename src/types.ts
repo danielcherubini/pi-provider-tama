@@ -1,4 +1,4 @@
-/** Model as returned by tama's /tama/v1/opencode/models endpoint. */
+/** Model as returned by tama's /v1/opencode/models endpoint. */
 export interface TamaModel {
   id: string
   name: string
@@ -17,7 +17,7 @@ export interface TamaModel {
   gpu_layers?: number
 }
 
-/** Response from tama's /tama/v1/opencode/models endpoint. */
+/** Response from tama's /v1/opencode/models endpoint. */
 export interface TamaModelsResponse {
   models: TamaModel[]
 }

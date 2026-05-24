@@ -40,13 +40,13 @@ describe('normalizeBaseURL', () => {
 describe('buildAPIURL', () => {
   it('builds the default opencode models URL', () => {
     expect(buildAPIURL('http://localhost:11434')).toBe(
-      'http://localhost:11434/tama/v1/opencode/models'
+      'http://localhost:11434/v1/opencode/models'
     )
   })
 
   it('normalizes before building', () => {
     expect(buildAPIURL('http://localhost:11434/v1/')).toBe(
-      'http://localhost:11434/tama/v1/opencode/models'
+      'http://localhost:11434/v1/opencode/models'
     )
   })
 

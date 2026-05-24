@@ -1,7 +1,7 @@
 import type { TamaModel, TamaModelsResponse, PiModel, PiProviderConfig } from './types'
 
 const DEFAULT_TAMA_URL = 'http://127.0.0.1:11434'
-const TAMA_MODELS_ENDPOINT = '/tama/v1/opencode/models'
+const TAMA_MODELS_ENDPOINT = '/v1/opencode/models'
 
 const DEFAULT_CONTEXT_WINDOW = 128000
 const DEFAULT_MAX_TOKENS = 8192
