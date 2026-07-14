@@ -443,4 +443,66 @@ describe('discoverTamaForPi', () => {
       expect(headers.Authorization).toBe('Bearer test-token')
     }
   })
+
+  // ---- Langfuse session header ----
+
+  it('buildPiProviderConfig sets langfuse_session_id when sessionId provided', () => {
+    const config = buildPiProviderConfig(
+      'http://127.0.0.1:11434',
+      [{ id: 'test/model', name: 'Test', context_length: 8192 }],
+      undefined,
+      'my-session-uuid'
+    )
+    expect(config.headers).toEqual({ langfuse_session_id: 'my-session-uuid' })
+  })
+
+  it('buildPiProviderConfig omits headers when no sessionId', () => {
+    const config = buildPiProviderConfig('http://127.0.0.1:11434', [
+      { id: 'test/model', name: 'Test', context_length: 8192 },
+    ])
+    expect(config.headers).toBeUndefined()
+  })
+
+  it('buildPiProviderConfig threads sessionId alongside token', () => {
+    const config = buildPiProviderConfig(
+      'http://127.0.0.1:11434',
+      [{ id: 'test/model', name: 'Test', context_length: 8192 }],
+      'tok',
+      'session-123'
+    )
+    expect(config.apiKey).toBe('tok')
+    expect(config.headers).toEqual({ langfuse_session_id: 'session-123' })
+  })
+
+  it('discoverTamaForPi passes sessionId through to config', async () => {
+    const body = {
+      models: [{ id: 'test/model', name: 'Test', context_length: 8192 }],
+    }
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    )
+
+    const config = await discoverTamaForPi('http://localhost:11434', undefined, 'sess-abc')
+    expect(config).not.toBeNull()
+    expect(config!.headers).toEqual({ langfuse_session_id: 'sess-abc' })
+  })
+
+  it('discoverTamaForPi produces config without headers when no sessionId', async () => {
+    const body = {
+      models: [{ id: 'test/model', name: 'Test', context_length: 8192 }],
+    }
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    )
+
+    const config = await discoverTamaForPi('http://localhost:11434')
+    expect(config).not.toBeNull()
+    expect(config!.headers).toBeUndefined()
+  })
 })

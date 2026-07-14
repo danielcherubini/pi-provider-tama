@@ -154,10 +154,14 @@ export function transformModel(model: TamaModel): PiModel {
 export function buildPiProviderConfig(
   baseURL: string,
   tamaModels: TamaModel[],
-  token?: string
+  token?: string,
+  sessionId?: string
 ): PiProviderConfig {
   const normalized = normalizeBaseURL(baseURL)
 
+  // Build Langfuse session header. Tama forwards langfuse_session_id to Langfuse
+  // so all requests in one pi session group into a single trace session.
+  // One session ID per /reload — a new pi session gets a new group of traces.
   return {
     baseUrl: `${normalized}/v1`,
     api: 'openai-completions',
@@ -166,6 +170,7 @@ export function buildPiProviderConfig(
       supportsDeveloperRole: false,
       supportsReasoningEffort: false,
     },
+    ...(sessionId ? { headers: { langfuse_session_id: sessionId } } : {}),
     models: tamaModels.map(transformModel),
   }
 }
@@ -207,13 +212,18 @@ export async function resolveAndFetch(
 
 /**
  * Full discovery flow: detect tama, fetch models, return pi provider config.
- * Returns null if tama is not reachable or has no models.
+ * Returns null when tama is not reachable or has no models.
+ *
+ * `sessionId` (a UUID) is injected as the `langfuse_session_id` header on all
+ * requests so tama can group traces into a single Langfuse session. One ID
+ * per pi session — a new UUID is generated on each call (e.g., on /reload).
  */
 export async function discoverTamaForPi(
   tamaURL?: string,
-  token?: string
+  token?: string,
+  sessionId?: string
 ): Promise<PiProviderConfig | null> {
   const data = await resolveAndFetch(tamaURL, token)
   if (!data) return null
-  return buildPiProviderConfig(data.baseURL, data.models, token)
+  return buildPiProviderConfig(data.baseURL, data.models, token, sessionId)
 }

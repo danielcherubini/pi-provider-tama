@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type { ExtensionAPI } from '@mariozechner/pi-coding-agent'
@@ -29,7 +30,15 @@ async function discoverAndRegister(pi: ExtensionAPI): Promise<void> {
   const data = await resolveAndFetch(tamaURL, tamaToken)
   if (!data) return
 
-  pi.registerProvider(PROVIDER_NAME, buildPiProviderConfig(data.baseURL, data.models, tamaToken))
+  // One session ID per registration cycle (initial load + each /reload).
+  // Tama forwards langfuse_session_id to Langfuse, grouping all requests in
+  // this pi session into a single trace session in the Langfuse UI.
+  const sessionId = randomUUID()
+
+  pi.registerProvider(
+    PROVIDER_NAME,
+    buildPiProviderConfig(data.baseURL, data.models, tamaToken, sessionId)
+  )
 }
 
 // Async factory: pi awaits this before initial scope resolution, so every
