@@ -9,7 +9,7 @@ When pi starts (or on `/reload`), this extension:
 1. Auto-detects tama on ports `11434` or `8080`
 2. Fetches available models from tama's API
 3. Registers a `tama` provider in pi with all discovered models
-4. Background-refreshes models on each new session (`session_start`)
+4. Refreshes models on `/reload` (pi's built-in model store persists across sessions)
 
 Models appear in `/model` immediately — no manual `models.json` editing needed.
 
@@ -142,9 +142,9 @@ On startup the factory:
 2. Fetches the live model list from `/v1/opencode/models`.
 3. Creates a `createProvider()`-based provider and registers it with pi.
 
-It also re-runs the same flow on `session_start`, so `/reload` picks up
-models that were added to tama after pi started. A new session ID is
-generated each cycle for Langfuse tracing.
+On `/reload` it re-fetches models from tama, so newly added models are picked up.
+Pi's built-in model store persists models across sessions. A new session ID is
+generated on each registration for Langfuse tracing.
 
 > Requires pi ≥ v0.81.0 with async-factory and `createProvider()` support (pi-mono ≥ Jan 2026). If tama is offline when pi boots, no tama models register — bring tama up and run `/reload`.
 
