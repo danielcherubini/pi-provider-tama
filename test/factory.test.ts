@@ -8,30 +8,30 @@ vi.mock('node:fs/promises', () => ({
   mkdir: vi.fn(),
 }))
 
-vi.mock('../src/cache', () => ({
-  readCache: vi.fn().mockResolvedValue(null),
-  writeCache: vi.fn().mockResolvedValue(undefined),
-  computeConfigHash: vi.fn().mockReturnValue('test-hash'),
-  isCacheStale: vi.fn().mockReturnValue(false),
-}))
-
 vi.mock('../src/tama-api', () => ({
-  normalizeBaseURL: vi.fn((u: string) => u || 'http://127.0.0.1:11434'),
+  normalizeBaseURL: vi.fn((u) => u || 'http://127.0.0.1:11434'),
   fetchTamaModels: vi.fn(),
-  buildPiProviderConfig: vi.fn((b, m, t, s) => ({
-    baseUrl: `${b}/v1`,
-    api: 'openai-completions',
-    apiKey: t || 'tama',
-    compat: { supportsDeveloperRole: false, supportsReasoningEffort: false },
-    headers: { langfuse_session_id: s },
-    models: m,
-  })),
   transformModel: vi.fn((m) => m),
   autoDetectTama: vi.fn(),
 }))
 
-import { readCache, writeCache, computeConfigHash, isCacheStale } from '../src/cache'
-import { fetchTamaModels, autoDetectTama, normalizeBaseURL } from '../src/tama-api'
+vi.mock('@earendil-works/pi-ai', () => ({
+  createProvider: vi.fn((opts) => ({
+    id: opts.id,
+    name: opts.name,
+    baseUrl: opts.baseUrl,
+    headers: opts.headers,
+    auth: opts.auth,
+    fetchModels: opts.fetchModels,
+    getModels: () => opts.models,
+  })),
+}))
+
+vi.mock('@earendil-works/pi-ai/compat', () => ({
+  openAICompletionsApi: vi.fn(() => ({ streamSimple: vi.fn() })),
+}))
+
+import { normalizeBaseURL, fetchTamaModels, autoDetectTama } from '../src/tama-api'
 
 interface StubPi {
   registerProvider: ReturnType<typeof vi.fn>
@@ -42,7 +42,7 @@ function makeStub(): StubPi {
   return { registerProvider: vi.fn(), on: vi.fn() }
 }
 
-describe('cache-first factory', () => {
+describe('fetch-in-factory', () => {
   const savedURL = process.env.TAMA_URL
   const savedToken = process.env.TAMA_TOKEN
 
@@ -51,6 +51,9 @@ describe('cache-first factory', () => {
     vi.clearAllMocks()
     delete process.env.TAMA_URL
     delete process.env.TAMA_TOKEN
+    // Default mocks so factory doesn't throw
+    vi.mocked(fetchTamaModels).mockResolvedValue([])
+    vi.mocked(autoDetectTama).mockResolvedValue(null)
   })
 
   afterEach(() => {
@@ -62,81 +65,28 @@ describe('cache-first factory', () => {
     else process.env.TAMA_TOKEN = savedToken
   })
 
-  it('registers with cached models immediately', async () => {
-    const cachedModels: TamaModel[] = [
-      { id: 'cached/model', name: 'Cached Model' },
-    ]
-    vi.mocked(readCache).mockResolvedValue({
-      version: 1,
-      configHash: 'test-hash',
-      lastFetchedMs: Date.now() - 1000,
-      baseURL: 'http://127.0.0.1:9999',
-      models: cachedModels,
-    })
-    vi.mocked(isCacheStale).mockReturnValue(false)
-
-    const pi = makeStub()
-    await extension(pi as never)
-
-    expect(pi.registerProvider).toHaveBeenCalledTimes(1)
-    const [name, config] = pi.registerProvider.mock.calls[0]!
-    expect(name).toBe('tama')
-    expect(config.models).toBe(cachedModels)
-    expect(fetchTamaModels).not.toHaveBeenCalled()
-  })
-
-  it('registers empty provider when no cache but TAMA_URL set', async () => {
-    process.env.TAMA_URL = 'http://explicit.example:1234'
-    vi.mocked(readCache).mockResolvedValue(null)
-
-    const pi = makeStub()
-    await extension(pi as never)
-
-    expect(pi.registerProvider).toHaveBeenCalledTimes(1)
-    const [name, config] = pi.registerProvider.mock.calls[0]!
-    expect(name).toBe('tama')
-    expect(config.models).toEqual([])
-    expect(config.baseUrl).toBe('http://explicit.example:1234/v1')
-  })
-
-  it('subscribes to session_start', async () => {
-    vi.mocked(readCache).mockResolvedValue(null)
-
-    const pi = makeStub()
-    await extension(pi as never)
-
-    expect(pi.on).toHaveBeenCalledWith('session_start', expect.any(Function))
-  })
-
-  it('background update re-registers only on model changes', async () => {
+  it('fetches models on startup and registers provider', async () => {
     process.env.TAMA_URL = 'http://test.example:5678'
-    vi.mocked(readCache).mockResolvedValue(null)
+    vi.mocked(fetchTamaModels).mockResolvedValue([
+      { id: 'model/one', name: 'Model One' },
+    ])
 
     const pi = makeStub()
     await extension(pi as never)
 
-    // First session_start: different models
-    vi.mocked(fetchTamaModels).mockResolvedValue([
-      { id: 'new/model', name: 'New Model' },
-    ])
-    const [, handler] = pi.on.mock.calls.find((c) => c[0] === 'session_start')!
-    await (handler as (event: { reason?: string }) => Promise<void>)({})
-    await vi.advanceTimersByTimeAsync(2001)
-
-    expect(pi.registerProvider).toHaveBeenCalledTimes(2) // initial + 1 update
-
-    // Second session_start: same model IDs — should NOT re-register
-    vi.mocked(fetchTamaModels).mockResolvedValue([
-      { id: 'new/model', name: 'New Model' },
-    ])
-    await (handler as (event: { reason?: string }) => Promise<void>)({})
-    await vi.advanceTimersByTimeAsync(2001)
-
-    expect(pi.registerProvider).toHaveBeenCalledTimes(2) // still 2
+    expect(fetchTamaModels).toHaveBeenCalledWith('http://test.example:5678', undefined)
+    expect(pi.registerProvider).toHaveBeenCalledTimes(1)
   })
 
-  it('background update auto-detects Tama when no explicit URL', async () => {
-    vi.mocked(readCache).mockResolvedValue(null)
+  it('skips registration when no tama detected', async () => {
+    // No TAMA_URL, autoDetectTama returns null (default mock)
+    const pi = makeStub()
+    await extension(pi as never)
+
+    expect(pi.registerProvider).not.toHaveBeenCalled()
+  })
+
+  it('auto-detects tama when no explicit URL', async () => {
     vi.mocked(autoDetectTama).mockResolvedValue('http://detected.example:8080')
     vi.mocked(fetchTamaModels).mockResolvedValue([
       { id: 'detected/model', name: 'Detected Model' },
@@ -145,155 +95,133 @@ describe('cache-first factory', () => {
     const pi = makeStub()
     await extension(pi as never)
 
-    const [, handler] = pi.on.mock.calls.find((c) => c[0] === 'session_start')!
-    await (handler as (event: { reason?: string }) => Promise<void>)({})
-    await vi.advanceTimersByTimeAsync(2001)
-
     expect(autoDetectTama).toHaveBeenCalled()
-    expect(pi.registerProvider).toHaveBeenCalledTimes(1) // only background update (no initial since no cache + no URL)
-    const [name, config] = pi.registerProvider.mock.calls[0]!
-    expect(config.baseUrl).toBe('http://detected.example:8080/v1')
-  })
-
-  it('background update errors do not crash', async () => {
-    process.env.TAMA_URL = 'http://error.example:9999'
-    vi.mocked(readCache).mockResolvedValue(null)
-    vi.mocked(fetchTamaModels).mockRejectedValue(new Error('network fail'))
-
-    const pi = makeStub()
-    await extension(pi as never)
-
-    const [, handler] = pi.on.mock.calls.find((c) => c[0] === 'session_start')!
-    await (handler as (event: { reason?: string }) => Promise<void>)({})
-    await vi.advanceTimersByTimeAsync(2001)
-
-    // Should not have thrown; registerProvider was called once (initial empty)
     expect(pi.registerProvider).toHaveBeenCalledTimes(1)
+    const provider = pi.registerProvider.mock.calls[0]![0]
+    expect(provider.baseUrl).toBe('http://detected.example:8080/v1')
   })
 
-  it('reload reason skips the 2s delay', async () => {
+  it('registers empty provider when fetch returns no models', async () => {
     process.env.TAMA_URL = 'http://test.example:5678'
-    vi.mocked(readCache).mockResolvedValue(null)
-    vi.mocked(fetchTamaModels).mockResolvedValue([
-      { id: 'reload/model', name: 'Reload Model' },
-    ])
+    vi.mocked(fetchTamaModels).mockResolvedValue([])
 
     const pi = makeStub()
     await extension(pi as never)
 
-    const [, handler] = pi.on.mock.calls.find((c) => c[0] === 'session_start')!
-    await (handler as (event: { reason?: string }) => Promise<void>)({ reason: 'reload' })
-    // With reload, delay is 0 — should run immediately at 1ms
-    await vi.advanceTimersByTimeAsync(1)
-
-    expect(pi.registerProvider).toHaveBeenCalledTimes(2)
+    expect(pi.registerProvider).toHaveBeenCalledTimes(1)
+    const provider = pi.registerProvider.mock.calls[0]![0]
+    expect(provider.getModels()).toEqual([])
   })
 
-  it('cache exists but config hash changed → factory skips cache, background re-fetches after session_start delay', async () => {
+  it('subscribes to session_start', async () => {
     process.env.TAMA_URL = 'http://test.example:5678'
 
-    // Cached entry has old configHash
-    const cachedModels: TamaModel[] = [
-      { id: 'old/model', name: 'Old Model' },
-    ]
-    vi.mocked(readCache).mockResolvedValue({
-      version: 1,
-      configHash: 'old-config-hash',
-      lastFetchedMs: Date.now() - 1000,
-      baseURL: 'http://127.0.0.1:9999',
-      models: cachedModels,
-    })
-    // Current config produces a different hash
-    vi.mocked(computeConfigHash).mockReturnValue('new-config-hash')
-    // isCacheStale returns true because hashes differ
-    vi.mocked(isCacheStale).mockReturnValue(true)
+    const pi = makeStub()
+    await extension(pi as never)
+
+    expect(pi.on).toHaveBeenCalledWith('session_start', expect.any(Function))
+  })
+
+  it('reload triggers background refresh with fresh models', async () => {
+    process.env.TAMA_URL = 'http://test.example:5678'
+    vi.mocked(fetchTamaModels).mockResolvedValue([]) // initial fetch returns empty
 
     const pi = makeStub()
     await extension(pi as never)
 
-    // Cache skipped due to hash mismatch, but TAMA_URL is set → registers empty provider
     expect(pi.registerProvider).toHaveBeenCalledTimes(1)
-    const [initName, initConfig] = pi.registerProvider.mock.calls[0]!
-    expect(initName).toBe('tama')
-    expect((initConfig as { models: unknown[] }).models).toHaveLength(0)
 
-    // Trigger session_start → background update after 2s delay
+    // Now simulate reload with new models
     vi.mocked(fetchTamaModels).mockResolvedValue([
       { id: 'new/model', name: 'New Model' },
     ])
     const [, handler] = pi.on.mock.calls.find((c) => c[0] === 'session_start')!
-    await (handler as (event: { reason?: string }) => Promise<void>)({})
-    await vi.advanceTimersByTimeAsync(2001)
+    await (handler as (event: { reason?: string }) => Promise<void>)({ reason: 'reload' })
+    await vi.advanceTimersByTimeAsync(1)
 
-    // Background fetch should have run and re-registered with fresh models (2nd call after initial empty)
-    expect(fetchTamaModels).toHaveBeenCalledWith('http://test.example:5678', undefined)
     expect(pi.registerProvider).toHaveBeenCalledTimes(2)
-    const [name, config] = pi.registerProvider.mock.calls[1]!
-    expect(name).toBe('tama')
-    expect(config.models).toEqual([{ id: 'new/model', name: 'New Model' }])
   })
 
-  it('empty Tama response doesn\'t overwrite valid cache', async () => {
-    // Cached entry with valid models
-    const cachedModels: TamaModel[] = [
-      { id: 'cached/model', name: 'Cached Model' },
-    ]
-    vi.mocked(readCache).mockResolvedValue({
-      version: 1,
-      configHash: 'test-hash',
-      lastFetchedMs: Date.now() - 1000,
-      baseURL: 'http://127.0.0.1:9999',
-      models: cachedModels,
-    })
-    vi.mocked(isCacheStale).mockReturnValue(false)
-
-    const pi = makeStub()
-    await extension(pi as never)
-
-    // Initial registration should use cache
-    expect(pi.registerProvider).toHaveBeenCalledTimes(1)
-    expect(writeCache).not.toHaveBeenCalled()
-
-    // Background fetch returns empty — should NOT write cache (don't clobber)
-    vi.mocked(fetchTamaModels).mockResolvedValue([])
-    const [, handler] = pi.on.mock.calls.find((c) => c[0] === 'session_start')!
-    await (handler as (event: { reason?: string }) => Promise<void>)({})
-    await vi.advanceTimersByTimeAsync(2001)
-
-    // writeCache should NOT have been called with empty models
-    expect(writeCache).not.toHaveBeenCalled()
-  })
-
-  it('multiple rapid session_start events don\'t crash', async () => {
+  it('non-reload session_start is a no-op', async () => {
     process.env.TAMA_URL = 'http://test.example:5678'
-    vi.mocked(readCache).mockResolvedValue(null)
+    const callCountBefore = 1 // initial registration
 
     const pi = makeStub()
     await extension(pi as never)
 
+    const [, handler] = pi.on.mock.calls.find((c) => c[0] === 'session_start')!
+    await (handler as (event: { reason?: string }) => Promise<void>)({ reason: 'new' })
+    await vi.advanceTimersByTimeAsync(100)
+
+    expect(pi.registerProvider).toHaveBeenCalledTimes(callCountBefore) // no additional registration
+  })
+
+  it('module state resets between factory runs', async () => {
+    process.env.TAMA_URL = 'http://test.example:5678'
     vi.mocked(fetchTamaModels).mockResolvedValue([
-      { id: 'model-1', name: 'Model 1' },
+      { id: 'model/one', name: 'Model One' },
     ])
 
-    // First session_start (simulates /reload — delay 0)
+    const pi1 = makeStub()
+    await extension(pi1 as never)
+
+    // Second factory run (simulates reload)
+    vi.mocked(fetchTamaModels).mockResolvedValue([
+      { id: 'model/two', name: 'Model Two' },
+    ])
+    const pi2 = makeStub()
+    await extension(pi2 as never)
+
+    // Both should have registered independently (state was reset)
+    expect(pi1.registerProvider).toHaveBeenCalledTimes(1)
+    expect(pi2.registerProvider).toHaveBeenCalledTimes(1)
+  })
+
+  it('background refresh errors do not crash', async () => {
+    process.env.TAMA_URL = 'http://test.example:5678'
+    vi.mocked(fetchTamaModels).mockResolvedValue([])
+
+    const pi = makeStub()
+    await extension(pi as never)
+
+    // Simulate fetch failure on reload
+    vi.mocked(fetchTamaModels).mockRejectedValue(new Error('network fail'))
     const [, handler] = pi.on.mock.calls.find((c) => c[0] === 'session_start')!
     await (handler as (event: { reason?: string }) => Promise<void>)({ reason: 'reload' })
     await vi.advanceTimersByTimeAsync(1)
 
-    expect(pi.registerProvider).toHaveBeenCalledTimes(2) // initial empty + reload update
+    // Should not have thrown; only initial registration
+    expect(pi.registerProvider).toHaveBeenCalledTimes(1)
+  })
 
-    // Second session_start (simulates /new — delay 2000ms, but we advance immediately)
-    // Simulate last-write-wins: new models
+  it('background refresh skips when models unchanged', async () => {
+    process.env.TAMA_URL = 'http://test.example:5678'
     vi.mocked(fetchTamaModels).mockResolvedValue([
-      { id: 'model-2', name: 'Model 2' },
+      { id: 'model/one', name: 'Model One' },
     ])
-    await (handler as (event: { reason?: string }) => Promise<void>)({})
-    // Advance past the 2s delay
-    await vi.advanceTimersByTimeAsync(2001)
 
-    // Should have 3 total registrations: initial empty + reload update + new update
-    expect(pi.registerProvider).toHaveBeenCalledTimes(3)
-    const [name, config] = pi.registerProvider.mock.calls[2]!
-    expect(config.models).toEqual([{ id: 'model-2', name: 'Model 2' }])
+    const pi = makeStub()
+    await extension(pi as never)
+
+    expect(pi.registerProvider).toHaveBeenCalledTimes(1)
+
+    // Reload with same models — should not re-register
+    const [, handler] = pi.on.mock.calls.find((c) => c[0] === 'session_start')!
+    await (handler as (event: { reason?: string }) => Promise<void>)({ reason: 'reload' })
+    await vi.advanceTimersByTimeAsync(1)
+
+    expect(pi.registerProvider).toHaveBeenCalledTimes(1) // still 1, no re-registration
+  })
+
+  it('passes fetchModels callback to createProvider for pi persistence', async () => {
+    process.env.TAMA_URL = 'http://test.example:5678'
+    vi.mocked(fetchTamaModels).mockResolvedValue([])
+
+    const pi = makeStub()
+    await extension(pi as never)
+
+    const provider = pi.registerProvider.mock.calls[0]![0]
+    expect(provider.fetchModels).toBeDefined()
+    expect(typeof provider.fetchModels).toBe('function')
   })
 })
