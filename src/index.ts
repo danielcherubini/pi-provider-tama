@@ -34,15 +34,14 @@ async function fetchAndCache(baseURL: string, configHash: string, token?: string
   return models.length > 0 ? models : null
 }
 
-function buildRefreshModels(baseURL: string, token?: string) {
+function buildRefreshModels(baseURL: string, configHash: string, token?: string) {
   return async (ctx: RefreshModelsContext): Promise<ProviderModelConfig[]> => {
     if (!ctx.allowNetwork) return []
     try {
       const models = await fetchTamaModels(baseURL, token)
       // Also write to our cache file so next startup has fresh data
-      const configHash = computeConfigHash(baseURL, token)
       if (models.length > 0) await writeCache(baseURL, models, configHash)
-      return models.map(transformModel) as ProviderModelConfig[]
+      return models.map(transformModel)
     } catch {
       return [] // graceful — Pi keeps existing models
     }
@@ -53,12 +52,13 @@ async function registerWithModels(
   pi: ExtensionAPI,
   baseURL: string,
   models: TamaModel[],
+  configHash: string,
   token?: string,
 ) {
   const sessionId = randomUUID()
   const config = {
     ...buildPiProviderConfig(baseURL, models, token, sessionId),
-    refreshModels: buildRefreshModels(baseURL, token),
+    refreshModels: buildRefreshModels(baseURL, configHash, token),
   }
   // Cast because mariozechner stub lacks refreshModels; runtime @earendil-works has it.
   pi.registerProvider(PROVIDER_NAME, config as unknown as ProviderConfig)
@@ -89,10 +89,10 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   if (initialModels.length > 0) {
     // Prefer explicit URL from settings/env; fall back to cached baseURL (preserves correct port)
     const regURL = tamaURL ? normalizeBaseURL(tamaURL) : cached?.baseURL ?? 'http://127.0.0.1:11434'
-    await registerWithModels(pi, regURL, initialModels, tamaToken)
+    await registerWithModels(pi, regURL, initialModels, configHash, tamaToken)
   } else if (tamaURL) {
     // Explicit URL but no cache — register empty provider so it appears in UI
-    await registerWithModels(pi, normalizeBaseURL(tamaURL), [], tamaToken)
+    await registerWithModels(pi, normalizeBaseURL(tamaURL), [], configHash, tamaToken)
   }
 
   // 3. Background update on session_start
@@ -118,7 +118,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         const freshModels = await fetchAndCache(targetURL, configHash, tamaToken)
         if (!freshModels || !modelsChanged(freshModels)) return
 
-        await registerWithModels(pi, targetURL, freshModels, tamaToken)
+        await registerWithModels(pi, targetURL, freshModels, configHash, tamaToken)
       } catch (err) {
         console.warn(`[pi-provider-tama] Background update failed: ${err instanceof Error ? err.message : String(err)}`)
       }

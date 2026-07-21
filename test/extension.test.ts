@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import extension from '../src/index'
-import type { TamaModel } from '../src/types'
+
+vi.mock('node:fs/promises', () => ({
+  readFile: vi.fn().mockRejectedValue(new Error('ENOENT')),
+  writeFile: vi.fn(),
+  mkdir: vi.fn(),
+}))
 
 vi.mock('../src/cache', () => ({
   readCache: vi.fn().mockResolvedValue(null),
@@ -8,6 +12,9 @@ vi.mock('../src/cache', () => ({
   computeConfigHash: vi.fn().mockReturnValue('test-hash'),
   isCacheStale: vi.fn().mockReturnValue(false),
 }))
+
+import extension from '../src/index'
+import type { TamaModel } from '../src/types'
 
 // Minimal stub of the pi ExtensionAPI surface that the extension touches.
 interface StubPi {
@@ -85,7 +92,6 @@ describe('default extension factory', () => {
 
   it('registers with empty models when no cache and Tama unreachable', async () => {
     process.env.TAMA_URL = 'http://unreachable.example:11434'
-    vi.mocked(fetch).mockRejectedValue(new Error('refused'))
 
     const pi = makeStub()
     await extension(pi as never)
@@ -96,7 +102,7 @@ describe('default extension factory', () => {
     expect(config.baseUrl).toBe('http://unreachable.example:11434/v1')
     // session_start should still be wired so /reload can retry.
     expect(pi.on).toHaveBeenCalledWith('session_start', expect.any(Function))
-  }, 10000)
+  })
 
   it('re-registers on session_start with current models', async () => {
     process.env.TAMA_URL = 'http://remote.example:11434'

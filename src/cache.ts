@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
 import { homedir } from 'node:os'
 import type { TamaCacheFile, TamaModel } from './types'
 
@@ -28,7 +28,7 @@ export async function readCache(): Promise<TamaCacheFile | null> {
 }
 
 export async function writeCache(baseURL: string, models: TamaModel[], configHash: string): Promise<void> {
-  await mkdir(join(CACHE_PATH, '..'), { recursive: true })
+  await mkdir(dirname(CACHE_PATH), { recursive: true })
   const entry: TamaCacheFile = {
     version: 1,
     baseURL,
