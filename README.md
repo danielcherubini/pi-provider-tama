@@ -9,6 +9,7 @@ When pi starts (or on `/reload`), this extension:
 1. Auto-detects tama on ports `11434` or `8080`
 2. Fetches available models from tama's API
 3. Registers a `tama` provider in pi with all discovered models
+4. Refreshes models on `/reload` (pi's built-in model store persists across sessions)
 
 Models appear in `/model` immediately — no manual `models.json` editing needed.
 
@@ -72,7 +73,18 @@ export TAMA_URL=http://myserver:11434
 
 ### Authentication
 
-If your tama instance is gated behind a bearer token, configure one of:
+#### Interactive login (primary)
+
+Run `/login tama` in the pi chat. You'll be prompted to choose a token source:
+
+- **Enter token** — type or paste your tama API token interactively
+- **Use TAMA_TOKEN env var** — delegates to the fallback path below
+
+The stored credential is cached and reused on every provider registration until you run `/login tama` again.
+
+#### Fallback sources (env var / settings.json)
+
+If you prefer not to use interactive login, or as a backup when tama requires auth but no token was stored:
 
 1. **`TAMA_TOKEN` environment variable** (highest priority):
 
@@ -92,28 +104,49 @@ If your tama instance is gated behind a bearer token, configure one of:
    }
    ```
 
-The token is sent as `Authorization: Bearer <token>` on both model discovery and inference requests, and is used as pi's `apiKey` for the registered provider. When unset, no auth header is sent (fine for localhost).
+The token is sent as `Authorization: Bearer <token>` on both model discovery and inference requests. When unset, no auth header is sent (fine for localhost).
 
-**Priority order:** `TAMA_TOKEN` env var → `settings.json` token → none
+**Priority order:** stored credential → `TAMA_TOKEN` env var → `settings.json` token → fallback `"tama"`
+
+## New in v0.81.0
+
+### Interactive auth via `/login tama`
+
+The extension now supports interactive login through pi's auth system. Run `/login tama` to securely enter your API token without exposing it in environment variables or config files. The credential is stored and automatically resolved on every provider registration cycle.
+
+See the [Authentication](#authentication) section above for full details on the dual-path auth flow.
+
+### Backend-aware per-model compatibility
+
+Each tama model now carries compatibility flags derived from its upstream backend metadata (`llama.cpp`, `ONNX`, etc.). The extension maps backends to the right `compat` settings automatically — for example, `llama.cpp` backends get `maxTokensField: "max_tokens"` and `requiresToolResultName: false`, while unknown backends receive sensible defaults.
+
+No manual configuration needed; the flags are applied per-model at registration time.
+
+### Context overflow auto-compaction
+
+pi v0.81.0 includes built-in context overflow detection (`isContextOverflow()`), which handles common overflow patterns from llama.cpp, Ollama, LM Studio, and other local backends. The extension no longer needs custom overflow handling — pi auto-compacts when the context exceeds available space.
+
+### Official package dependencies
+
+This extension now depends on `@earendil-works/pi-coding-agent` (v0.81.0+) and `@earendil-works/pi-ai` (v0.81.0+), replacing the previous `@mariozechner/pi-coding-agent` fork. The migration brings native `createProvider()` support, cleaner auth wiring, and up-to-date type definitions.
 
 ## How it works
 
 The extension is an **async factory**: pi awaits it before resolving which
 models are available, so every tama model is registered before pi decides
-what's selectable. No caching layer, no sync pre-registration dance.
+what's selectable.
 
 On startup the factory:
 
 1. Resolves the tama URL/token (env → `settings.json` → auto-detect localhost).
-2. Fetches the live model list from `/tama/v1/opencode/models`.
-3. Calls `pi.registerProvider("tama", …)` with every discovered model.
+2. Fetches the live model list from `/v1/opencode/models`.
+3. Creates a `createProvider()`-based provider and registers it with pi.
 
-It also re-runs the same flow on `session_start`, so `/reload` picks up
-models that were added to tama after pi started.
+On `/reload` it re-fetches models from tama, so newly added models are picked up.
+Pi's built-in model store persists models across sessions. A new session ID is
+generated on each registration for Langfuse tracing.
 
-> Requires pi with async-factory support (pi-mono ≥ Jan 2026,
-> commit `aea9f843`). If tama is offline when pi boots, no tama models
-> register — bring tama up and run `/reload`.
+> Requires pi ≥ v0.81.0 with async-factory and `createProvider()` support (pi-mono ≥ Jan 2026). If tama is offline when pi boots, no tama models register — bring tama up and run `/reload`.
 
 Discovered models are mapped to pi's provider format:
 
@@ -130,7 +163,8 @@ All models are registered with:
 - `api: "openai-completions"` (OpenAI-compatible)
 - `reasoning: false`
 - `cost: { input: 0, output: 0, ... }` (local = free)
-- `compat: { supportsDeveloperRole: false, supportsReasoningEffort: false }`
+- `compat:` merged from default + backend-specific overrides (see [Backend-aware compat](#backend-aware-per-model-compat))
+- `provider: "tama"`, `api: "openai-completions"` for pi's internal routing
 
 ## Migrating from pi-tama
 
@@ -152,7 +186,8 @@ npm run typecheck # Type check
 ## Requirements
 
 - [tama](https://github.com/danielcherubini/tama) running locally with `tama serve`
-- [pi](https://pi.dev) agent
+- [pi](https://pi.dev) ≥ v0.81.0 (with async-factory and `createProvider()` support)
+- Peer dependency: `@earendil-works/pi-coding-agent` ^0.81.0, `@earendil-works/pi-ai` ^0.81.0
 
 ## License
 
