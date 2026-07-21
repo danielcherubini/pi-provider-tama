@@ -38,6 +38,15 @@ export interface PiModel {
   }
 }
 
+/** Cache file structure for model persistence. */
+export interface TamaCacheFile {
+  version: number
+  configHash: string
+  lastFetchedMs: number
+  baseURL: string
+  models: TamaModel[]
+}
+
 /** Pi provider configuration passed to pi.registerProvider(). */
 export interface PiProviderConfig {
   baseUrl: string
