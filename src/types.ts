@@ -33,6 +33,14 @@ export interface RefreshModelsContext {
 
 export type ProviderModelConfig = PiModel // same shape as our PiModel
 
+/** Per-model compatibility flags for upstream backend quirks. */
+export interface PiCompat {
+  supportsDeveloperRole?: boolean
+  supportsReasoningEffort?: boolean
+  maxTokensField?: 'max_completion_tokens' | 'max_tokens'
+  requiresToolResultName?: boolean
+}
+
 /** A model in pi's provider format. */
 export interface PiModel {
   id: string
@@ -47,6 +55,10 @@ export interface PiModel {
     cacheRead: number
     cacheWrite: number
   }
+  compat?: PiCompat
+  provider: 'tama'
+  api: 'openai-completions'
+  baseUrl?: string
 }
 
 /** Cache file structure for model persistence. */

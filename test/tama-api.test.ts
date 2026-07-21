@@ -73,7 +73,50 @@ describe('transformModel', () => {
       contextWindow: 128000,
       maxTokens: 8000,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      compat: {
+        supportsDeveloperRole: false,
+        supportsReasoningEffort: false,
+        maxTokensField: 'max_tokens',
+      },
+      provider: 'tama',
+      api: 'openai-completions',
     })
+  })
+
+  it('applies llama.cpp compat for backend "llama.cpp"', () => {
+    const model: TamaModel = { ...baseModel, backend: 'llama.cpp' }
+    const result = transformModel(model)
+    expect(result.compat).toEqual({
+      supportsDeveloperRole: false,
+      supportsReasoningEffort: false,
+      maxTokensField: 'max_tokens',
+      requiresToolResultName: false,
+    })
+  })
+
+  it('applies ONNX compat for backend "onnx"', () => {
+    const model: TamaModel = { ...baseModel, backend: 'onnx' }
+    const result = transformModel(model)
+    expect(result.compat).toEqual({
+      supportsDeveloperRole: false,
+      supportsReasoningEffort: false,
+      maxTokensField: 'max_tokens',
+    })
+  })
+
+  it('gets DEFAULT_COMPAT only for unknown backend', () => {
+    const model: TamaModel = { ...baseModel, backend: 'unknown-backend' }
+    const result = transformModel(model)
+    expect(result.compat).toEqual({
+      supportsDeveloperRole: false,
+      supportsReasoningEffort: false,
+      maxTokensField: 'max_tokens',
+    })
+  })
+
+  it('includes baseUrl when provided as second argument', () => {
+    const result = transformModel(baseModel, 'http://127.0.0.1:8080/v1')
+    expect(result.baseUrl).toBe('http://127.0.0.1:8080/v1')
   })
 
   it('uses context_length when provided', () => {

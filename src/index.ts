@@ -47,7 +47,7 @@ function buildProvider(
   sessionId?: string,
 ) {
   const normalizedBase = normalizeBaseURL(baseURL)
-  const transformed = models.map(transformModel)
+  const transformed = models.map(m => transformModel(m, `${normalizedBase}/v1`))
 
   return createProvider({
     id: 'tama',
@@ -61,7 +61,7 @@ function buildProvider(
         resolve: ({ ctx, credential }) => resolveTamaAuth({ credential, ctx, settings }),
       },
     },
-    models: transformed as any, // Model<Api> cast — Task 3 handles proper typing
+    models: transformed,
     api: openAICompletionsApi(),
   })
 }

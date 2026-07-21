@@ -1,10 +1,28 @@
-import type { TamaModel, TamaModelsResponse, PiModel, PiProviderConfig } from './types'
+import type { TamaModel, TamaModelsResponse, PiModel, PiProviderConfig, PiCompat } from './types'
 
 const DEFAULT_TAMA_URL = 'http://127.0.0.1:11434'
 const TAMA_MODELS_ENDPOINT = '/v1/opencode/models'
 
 const DEFAULT_CONTEXT_WINDOW = 128000
 const DEFAULT_MAX_TOKENS = 8192
+
+/** Backend-specific compatibility overrides. */
+const BACKEND_COMPAT: Record<string, PiCompat> = {
+  'llama.cpp': {
+    maxTokensField: 'max_tokens',
+    requiresToolResultName: false,
+  },
+  onnx: {
+    maxTokensField: 'max_tokens',
+  },
+}
+
+/** Default compatibility when no backend-specific override applies. */
+const DEFAULT_COMPAT: PiCompat = {
+  supportsDeveloperRole: false,
+  supportsReasoningEffort: false,
+  maxTokensField: 'max_tokens',
+}
 
 /** Normalize a base URL by stripping trailing slashes and /v1 suffix. */
 export function normalizeBaseURL(baseURL: string = DEFAULT_TAMA_URL): string {
@@ -120,7 +138,9 @@ export async function fetchTamaModels(baseURL: string = DEFAULT_TAMA_URL, token?
 }
 
 /** Transform a single tama model into pi's model format. */
-export function transformModel(model: TamaModel): PiModel {
+export function transformModel(model: TamaModel): PiModel
+export function transformModel(model: TamaModel, baseUrl: string): PiModel & { baseUrl: string }
+export function transformModel(model: TamaModel, baseUrl?: string): PiModel {
   const contextWindow = model.context_length ?? model.limit?.context ?? DEFAULT_CONTEXT_WINDOW
   // Use || (not ??) so that 0 also falls through to the computed default.
   // Some providers set limit.output = 0 meaning "no explicit limit", which would
@@ -133,6 +153,8 @@ export function transformModel(model: TamaModel): PiModel {
   const input: ('text' | 'image')[] = model.modalities?.input?.length
     ? (model.modalities.input.filter((m) => validInputTypes.has(m)) as ('text' | 'image')[])
     : ['text']
+
+  const backendCompat = model.backend ? BACKEND_COMPAT[model.backend] : undefined
 
   return {
     id: model.id,
@@ -147,6 +169,10 @@ export function transformModel(model: TamaModel): PiModel {
       cacheRead: 0,
       cacheWrite: 0,
     },
+    compat: { ...DEFAULT_COMPAT, ...backendCompat },
+    provider: 'tama',
+    api: 'openai-completions',
+    ...(baseUrl ? { baseUrl } : {}),
   }
 }
 
@@ -167,7 +193,7 @@ export function buildPiProviderConfig(
     api: 'openai-completions',
     apiKey: token || 'tama',
     ...(sessionId ? { headers: { langfuse_session_id: sessionId } } : {}),
-    models: tamaModels.map(transformModel),
+    models: tamaModels.map(m => transformModel(m)),
   }
 }
 
