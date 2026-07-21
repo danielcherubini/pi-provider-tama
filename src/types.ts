@@ -23,16 +23,6 @@ export interface TamaModelsResponse {
 }
 
 
-export interface RefreshModelsContext {
-  credential?: unknown
-  store: unknown
-  allowNetwork: boolean
-  force?: boolean
-  signal?: AbortSignal
-}
-
-export type ProviderModelConfig = PiModel // same shape as our PiModel
-
 /** Per-model compatibility flags for upstream backend quirks. */
 export interface PiCompat {
   supportsDeveloperRole?: boolean
