@@ -14,6 +14,7 @@ const SETTINGS_PATH = join(homedir(), '.pi', 'agent', 'settings.json')
 
 // Module-level state — reset at factory start to avoid test pollution / stale state across reloads.
 let lastRegisteredModelIds: string[] = []
+let refreshTimer: ReturnType<typeof setTimeout> | undefined
 
 interface Settings {
   url?: string
@@ -69,11 +70,17 @@ function buildProvider(
 export default async function (pi: ExtensionAPI): Promise<void> {
   // Reset module-level state to avoid stale data across reloads / test pollution
   lastRegisteredModelIds = []
+  refreshTimer = undefined
 
   const settings = await readSettings()
   const tamaURL = process.env.TAMA_URL || settings.url
   const tamaToken = process.env.TAMA_TOKEN || settings.token
   const configHash = computeConfigHash(tamaURL, tamaToken)
+
+  /** Resolve token for background fetch — mirrors resolveTamaAuth but without AuthContext. */
+  function resolveToken(): string | undefined {
+    return process.env.TAMA_TOKEN || settings.token
+  }
 
   // 1. Load cached models (instant — no network)
   const cached = await readCache()
@@ -97,18 +104,23 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     pi.registerProvider(provider)
   }
 
-  // 3. Background update on session_start
+  // 3. Background update on session_start — debounced to avoid concurrent timers
   pi.on('session_start', async (event) => {
     const reason = event.reason
     const delayMs = reason === 'reload' ? 0 : 2000
 
-    setTimeout(async () => {
+    // Cancel any pending refresh timer
+    if (refreshTimer) clearTimeout(refreshTimer)
+
+    refreshTimer = setTimeout(async () => {
+      refreshTimer = undefined
       try {
         let targetURL = tamaURL ? normalizeBaseURL(tamaURL) : ''
+        const token = resolveToken()
 
         // Auto-detect if no explicit URL (preserves zero-config behavior)
         if (!targetURL) {
-          const detected = await autoDetectTama(tamaToken)
+          const detected = await autoDetectTama(token)
           if (detected) {
             targetURL = normalizeBaseURL(detected)
           } else {
@@ -116,7 +128,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
           }
         }
 
-        const freshModels = await fetchTamaModels(targetURL, tamaToken)
+        const freshModels = await fetchTamaModels(targetURL, token)
         // fetchTamaModels returns [] (truthy) on failure — guard against empty arrays
         if (freshModels.length === 0 || !modelsChanged(freshModels)) return
 

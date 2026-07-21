@@ -176,7 +176,7 @@ export function transformModel(model: TamaModel, baseUrl?: string): PiModel {
   }
 }
 
-/** Transform all tama models into a complete pi provider config. */
+/** @deprecated Use `buildProvider()` in src/index.ts with createProvider() instead. Kept for backward compatibility. */
 export function buildPiProviderConfig(
   baseURL: string,
   tamaModels: TamaModel[],
@@ -197,7 +197,7 @@ export function buildPiProviderConfig(
   }
 }
 
-/**
+/** @deprecated Use `buildProvider()` in src/index.ts with createProvider() instead. Kept for backward compatibility.
  * Resolve a tama base URL (explicit or auto-detected) and fetch its model list.
  * Returns the baseURL and raw models, or null on failure.
  */
@@ -232,7 +232,7 @@ export async function resolveAndFetch(
   return { baseURL, models }
 }
 
-/**
+/** @deprecated Use `buildProvider()` in src/index.ts with createProvider() instead. Kept for backward compatibility.
  * Full discovery flow: detect tama, fetch models, return pi provider config.
  * Returns null when tama is not reachable or has no models.
  *

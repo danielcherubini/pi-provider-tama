@@ -139,7 +139,7 @@ what's selectable.
 On startup the factory:
 
 1. Resolves the tama URL/token (env → `settings.json` → auto-detect localhost).
-2. Fetches the live model list from `/tama/v1/opencode/models`.
+2. Fetches the live model list from `/v1/opencode/models`.
 3. Creates a `createProvider()`-based provider and registers it with pi.
 
 It also re-runs the same flow on `session_start`, so `/reload` picks up

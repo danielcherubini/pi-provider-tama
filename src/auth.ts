@@ -46,5 +46,10 @@ export async function loginTama(interaction: AuthInteraction): Promise<ApiKeyCre
     return { type: 'api_key', key }
   }
 
-  throw new Error('Login cancelled — set TAMA_TOKEN or configure in settings.json')
+  // User selected "Use TAMA_TOKEN env var" — read it and store as credential
+  const envKey = process.env.TAMA_TOKEN
+  if (!envKey) {
+    throw new Error('TAMA_TOKEN env var is not set')
+  }
+  return { type: 'api_key', key: envKey }
 }
