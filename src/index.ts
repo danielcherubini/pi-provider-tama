@@ -10,8 +10,10 @@ import { normalizeBaseURL, fetchTamaModels, buildPiProviderConfig, transformMode
 const PROVIDER_NAME = 'tama'
 const SETTINGS_PATH = join(homedir(), '.pi', 'agent', 'settings.json')
 
-// Module-level tracking so change-detection compares against last successful fetch, not original cache
+// Module-level state — reset at factory start to avoid test pollution / stale state across reloads.
 let lastRegisteredModelIds: string[] = []
+// Track the last successful model list so refreshModels can return it on failure instead of [] (which would clear Pi's provider).
+let lastSuccessfulModels: ProviderModelConfig[] = []
 
 async function readSettings(): Promise<{ url?: string; token?: string }> {
   try {
@@ -36,14 +38,16 @@ async function fetchAndCache(baseURL: string, configHash: string, token?: string
 
 function buildRefreshModels(baseURL: string, configHash: string, token?: string) {
   return async (ctx: RefreshModelsContext): Promise<ProviderModelConfig[]> => {
-    if (!ctx.allowNetwork) return []
+    if (!ctx.allowNetwork) return lastSuccessfulModels // don't clear models when offline
     try {
       const models = await fetchTamaModels(baseURL, token)
+      const transformed = models.map(transformModel)
       // Also write to our cache file so next startup has fresh data
       if (models.length > 0) await writeCache(baseURL, models, configHash)
-      return models.map(transformModel)
+      lastSuccessfulModels = transformed
+      return transformed
     } catch {
-      return [] // graceful — Pi keeps existing models
+      return lastSuccessfulModels // preserve existing models on transient failure
     }
   }
 }
@@ -72,6 +76,10 @@ function modelsChanged(newModels: TamaModel[]): boolean {
 }
 
 export default async function (pi: ExtensionAPI): Promise<void> {
+  // Reset module-level state to avoid stale data across reloads / test pollution
+  lastRegisteredModelIds = []
+  lastSuccessfulModels = []
+
   const settings = await readSettings()
   const tamaURL = process.env.TAMA_URL || settings.url
   const tamaToken = process.env.TAMA_TOKEN || settings.token
