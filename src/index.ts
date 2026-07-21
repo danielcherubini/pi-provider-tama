@@ -2,20 +2,25 @@ import { readFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
+import { createProvider } from '@earendil-works/pi-ai'
+import { openAICompletionsApi } from '@earendil-works/pi-ai/compat'
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent'
 import { readCache, writeCache, computeConfigHash, isCacheStale } from './cache'
-import type { RefreshModelsContext, ProviderModelConfig, TamaModel } from './types'
-import { normalizeBaseURL, fetchTamaModels, buildPiProviderConfig, transformModel, autoDetectTama } from './tama-api'
+import type { TamaModel } from './types'
+import { normalizeBaseURL, fetchTamaModels, transformModel, autoDetectTama } from './tama-api'
+import { resolveTamaAuth, loginTama } from './auth'
 
-const PROVIDER_NAME = 'tama'
 const SETTINGS_PATH = join(homedir(), '.pi', 'agent', 'settings.json')
 
 // Module-level state — reset at factory start to avoid test pollution / stale state across reloads.
 let lastRegisteredModelIds: string[] = []
-// Track the last successful model list so refreshModels can return it on failure instead of [] (which would clear Pi's provider).
-let lastSuccessfulModels: ProviderModelConfig[] = []
 
-async function readSettings(): Promise<{ url?: string; token?: string }> {
+interface Settings {
+  url?: string
+  token?: string
+}
+
+async function readSettings(): Promise<Settings> {
   try {
     const raw = await readFile(SETTINGS_PATH, 'utf-8')
     const section = JSON.parse(raw)?.['pi-provider-tama']
@@ -28,56 +33,42 @@ async function readSettings(): Promise<{ url?: string; token?: string }> {
   }
 }
 
-async function fetchAndCache(baseURL: string, configHash: string, token?: string): Promise<TamaModel[] | null> {
-  const models = await fetchTamaModels(baseURL, token)
-  if (models.length > 0) {
-    await writeCache(baseURL, models, configHash)
-  }
-  return models.length > 0 ? models : null
-}
-
-function buildRefreshModels(baseURL: string, configHash: string, token?: string) {
-  return async (ctx: RefreshModelsContext): Promise<ProviderModelConfig[]> => {
-    if (!ctx.allowNetwork) return lastSuccessfulModels // don't clear models when offline
-    try {
-      const models = await fetchTamaModels(baseURL, token)
-      const transformed = models.map(transformModel)
-      // Also write to our cache file so next startup has fresh data
-      if (models.length > 0) await writeCache(baseURL, models, configHash)
-      lastSuccessfulModels = transformed
-      return transformed
-    } catch {
-      return lastSuccessfulModels // preserve existing models on transient failure
-    }
-  }
-}
-
-async function registerWithModels(
-  pi: ExtensionAPI,
-  baseURL: string,
-  models: TamaModel[],
-  configHash: string,
-  token?: string,
-) {
-  const sessionId = randomUUID()
-  const config = {
-    ...buildPiProviderConfig(baseURL, models, token, sessionId),
-    refreshModels: buildRefreshModels(baseURL, configHash, token),
-  }
-  pi.registerProvider(PROVIDER_NAME, config)
-  lastRegisteredModelIds = models.map(m => m.id).sort()
-}
-
 function modelsChanged(newModels: TamaModel[]): boolean {
   const newIds = newModels.map(m => m.id).sort().join(',')
   const oldIds = lastRegisteredModelIds.join(',')
   return newIds !== oldIds
 }
 
+/** Build a createProvider() Provider object for the tama provider. */
+function buildProvider(
+  baseURL: string,
+  models: TamaModel[],
+  settings: Settings,
+  sessionId?: string,
+) {
+  const normalizedBase = normalizeBaseURL(baseURL)
+  const transformed = models.map(transformModel)
+
+  return createProvider({
+    id: 'tama',
+    name: 'Tama',
+    baseUrl: `${normalizedBase}/v1`,
+    headers: sessionId ? { langfuse_session_id: sessionId } : undefined,
+    auth: {
+      apiKey: {
+        name: 'Tama API Token',
+        login: loginTama,
+        resolve: ({ ctx, credential }) => resolveTamaAuth({ credential, ctx, settings }),
+      },
+    },
+    models: transformed as any, // Model<Api> cast — Task 3 handles proper typing
+    api: openAICompletionsApi(),
+  })
+}
+
 export default async function (pi: ExtensionAPI): Promise<void> {
   // Reset module-level state to avoid stale data across reloads / test pollution
   lastRegisteredModelIds = []
-  lastSuccessfulModels = []
 
   const settings = await readSettings()
   const tamaURL = process.env.TAMA_URL || settings.url
@@ -96,16 +87,19 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   if (initialModels.length > 0) {
     // Prefer explicit URL from settings/env; fall back to cached baseURL (preserves correct port)
     const regURL = tamaURL ? normalizeBaseURL(tamaURL) : cached?.baseURL ?? 'http://127.0.0.1:11434'
-    await registerWithModels(pi, regURL, initialModels, configHash, tamaToken)
+    const sessionId = randomUUID()
+    const provider = buildProvider(regURL, initialModels, settings, sessionId)
+    pi.registerProvider(provider)
   } else if (tamaURL) {
     // Explicit URL but no cache — register empty provider so it appears in UI
-    await registerWithModels(pi, normalizeBaseURL(tamaURL), [], configHash, tamaToken)
+    const sessionId = randomUUID()
+    const provider = buildProvider(normalizeBaseURL(tamaURL), [], settings, sessionId)
+    pi.registerProvider(provider)
   }
 
   // 3. Background update on session_start
   pi.on('session_start', async (event) => {
     const reason = event.reason
-    // Skip delay on reload — user explicitly wants fresh models now
     const delayMs = reason === 'reload' ? 0 : 2000
 
     setTimeout(async () => {
@@ -122,10 +116,20 @@ export default async function (pi: ExtensionAPI): Promise<void> {
           }
         }
 
-        const freshModels = await fetchAndCache(targetURL, configHash, tamaToken)
-        if (!freshModels || !modelsChanged(freshModels)) return
+        const freshModels = await fetchTamaModels(targetURL, tamaToken)
+        // fetchTamaModels returns [] (truthy) on failure — guard against empty arrays
+        if (freshModels.length === 0 || !modelsChanged(freshModels)) return
 
-        await registerWithModels(pi, targetURL, freshModels, configHash, tamaToken)
+        // Write to cache for next startup
+        if (freshModels.length > 0) {
+          await writeCache(targetURL, freshModels, configHash)
+        }
+
+        // Re-register with fresh createProvider (new sessionId for langfuse)
+        const newSessionId = randomUUID()
+        const provider = buildProvider(targetURL, freshModels, settings, newSessionId)
+        pi.registerProvider(provider)
+        lastRegisteredModelIds = freshModels.map(m => m.id).sort()
       } catch (err) {
         console.warn(`[pi-provider-tama] Background update failed: ${err instanceof Error ? err.message : String(err)}`)
       }

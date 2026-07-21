@@ -15,17 +15,24 @@ vi.mock('../src/cache', () => ({
   isCacheStale: vi.fn().mockReturnValue(false),
 }))
 
+vi.mock('@earendil-works/pi-ai', () => ({
+  createProvider: vi.fn((opts) => ({
+    id: opts.id,
+    name: opts.name,
+    baseUrl: opts.baseUrl,
+    headers: opts.headers,
+    auth: opts.auth,
+    getModels: () => opts.models,
+  })),
+}))
+
+vi.mock('@earendil-works/pi-ai/compat', () => ({
+  openAICompletionsApi: vi.fn(() => ({ streamSimple: vi.fn() })),
+}))
+
 vi.mock('../src/tama-api', () => ({
   normalizeBaseURL: vi.fn((u: string) => u || 'http://127.0.0.1:11434'),
   fetchTamaModels: vi.fn(),
-  buildPiProviderConfig: vi.fn((b, m, t, s) => ({
-    baseUrl: `${b}/v1`,
-    api: 'openai-completions',
-    apiKey: t || 'tama',
-    compat: { supportsDeveloperRole: false, supportsReasoningEffort: false },
-    headers: { langfuse_session_id: s },
-    models: m,
-  })),
   transformModel: vi.fn((m) => m),
   autoDetectTama: vi.fn(),
 }))
@@ -79,9 +86,9 @@ describe('cache-first factory', () => {
     await extension(pi as never)
 
     expect(pi.registerProvider).toHaveBeenCalledTimes(1)
-    const [name, config] = pi.registerProvider.mock.calls[0]!
-    expect(name).toBe('tama')
-    expect(config.models).toBe(cachedModels)
+    const provider = pi.registerProvider.mock.calls[0]![0]
+    expect(provider.id).toBe('tama')
+    expect(provider.getModels()).toEqual(cachedModels)
     expect(fetchTamaModels).not.toHaveBeenCalled()
   })
 
@@ -93,10 +100,10 @@ describe('cache-first factory', () => {
     await extension(pi as never)
 
     expect(pi.registerProvider).toHaveBeenCalledTimes(1)
-    const [name, config] = pi.registerProvider.mock.calls[0]!
-    expect(name).toBe('tama')
-    expect(config.models).toEqual([])
-    expect(config.baseUrl).toBe('http://explicit.example:1234/v1')
+    const provider = pi.registerProvider.mock.calls[0]![0]
+    expect(provider.id).toBe('tama')
+    expect(provider.getModels()).toEqual([])
+    expect(provider.baseUrl).toBe('http://explicit.example:1234/v1')
   })
 
   it('subscribes to session_start', async () => {
@@ -151,8 +158,8 @@ describe('cache-first factory', () => {
 
     expect(autoDetectTama).toHaveBeenCalled()
     expect(pi.registerProvider).toHaveBeenCalledTimes(1) // only background update (no initial since no cache + no URL)
-    const [name, config] = pi.registerProvider.mock.calls[0]!
-    expect(config.baseUrl).toBe('http://detected.example:8080/v1')
+    const provider = pi.registerProvider.mock.calls[0]![0]
+    expect(provider.baseUrl).toBe('http://detected.example:8080/v1')
   })
 
   it('background update errors do not crash', async () => {
@@ -213,9 +220,9 @@ describe('cache-first factory', () => {
 
     // Cache skipped due to hash mismatch, but TAMA_URL is set → registers empty provider
     expect(pi.registerProvider).toHaveBeenCalledTimes(1)
-    const [initName, initConfig] = pi.registerProvider.mock.calls[0]!
-    expect(initName).toBe('tama')
-    expect((initConfig as { models: unknown[] }).models).toHaveLength(0)
+    const initProvider = pi.registerProvider.mock.calls[0]![0]
+    expect(initProvider.id).toBe('tama')
+    expect((initProvider as { getModels: () => unknown[] }).getModels()).toHaveLength(0)
 
     // Trigger session_start → background update after 2s delay
     vi.mocked(fetchTamaModels).mockResolvedValue([
@@ -228,9 +235,9 @@ describe('cache-first factory', () => {
     // Background fetch should have run and re-registered with fresh models (2nd call after initial empty)
     expect(fetchTamaModels).toHaveBeenCalledWith('http://test.example:5678', undefined)
     expect(pi.registerProvider).toHaveBeenCalledTimes(2)
-    const [name, config] = pi.registerProvider.mock.calls[1]!
-    expect(name).toBe('tama')
-    expect(config.models).toEqual([{ id: 'new/model', name: 'New Model' }])
+    const provider = pi.registerProvider.mock.calls[1]![0]
+    expect(provider.id).toBe('tama')
+    expect(provider.getModels()).toEqual([{ id: 'new/model', name: 'New Model' }])
   })
 
   it('empty Tama response doesn\'t overwrite valid cache', async () => {
@@ -293,7 +300,7 @@ describe('cache-first factory', () => {
 
     // Should have 3 total registrations: initial empty + reload update + new update
     expect(pi.registerProvider).toHaveBeenCalledTimes(3)
-    const [name, config] = pi.registerProvider.mock.calls[2]!
-    expect(config.models).toEqual([{ id: 'model-2', name: 'Model 2' }])
+    const provider = pi.registerProvider.mock.calls[2]![0]
+    expect(provider.getModels()).toEqual([{ id: 'model-2', name: 'Model 2' }])
   })
 })

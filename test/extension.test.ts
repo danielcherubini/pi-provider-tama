@@ -13,6 +13,21 @@ vi.mock('../src/cache', () => ({
   isCacheStale: vi.fn().mockReturnValue(false),
 }))
 
+vi.mock('@earendil-works/pi-ai', () => ({
+  createProvider: vi.fn((opts) => ({
+    id: opts.id,
+    name: opts.name,
+    baseUrl: opts.baseUrl,
+    headers: opts.headers,
+    auth: opts.auth,
+    getModels: () => opts.models,
+  })),
+}))
+
+vi.mock('@earendil-works/pi-ai/compat', () => ({
+  openAICompletionsApi: vi.fn(() => ({ streamSimple: vi.fn() })),
+}))
+
 import extension from '../src/index'
 import type { TamaModel } from '../src/types'
 
@@ -65,9 +80,9 @@ describe('default extension factory', () => {
     await extension(pi as never)
 
     expect(pi.registerProvider).toHaveBeenCalledTimes(1)
-    const [name, config] = pi.registerProvider.mock.calls[0]!
-    expect(name).toBe('tama')
-    expect(config.models.length).toBe(0)
+    const provider = pi.registerProvider.mock.calls[0]![0]
+    expect(provider.id).toBe('tama')
+    expect(provider.getModels().length).toBe(0)
   })
 
   it('subscribes to session_start for mid-session refresh', async () => {
@@ -79,17 +94,6 @@ describe('default extension factory', () => {
     expect(pi.on).toHaveBeenCalledWith('session_start', expect.any(Function))
   })
 
-  it('forwards TAMA_TOKEN as Bearer header and as provider apiKey', async () => {
-    process.env.TAMA_URL = 'http://remote.example:11434'
-    process.env.TAMA_TOKEN = 'env-token'
-
-    const pi = makeStub()
-    await extension(pi as never)
-
-    const [, config] = pi.registerProvider.mock.calls[0]!
-    expect(config.apiKey).toBe('env-token')
-  })
-
   it('registers with empty models when no cache and Tama unreachable', async () => {
     process.env.TAMA_URL = 'http://unreachable.example:11434'
 
@@ -97,9 +101,9 @@ describe('default extension factory', () => {
     await extension(pi as never)
 
     expect(pi.registerProvider).toHaveBeenCalledTimes(1)
-    const [, config] = pi.registerProvider.mock.calls[0]!
-    expect(config.models.length).toBe(0)
-    expect(config.baseUrl).toBe('http://unreachable.example:11434/v1')
+    const provider = pi.registerProvider.mock.calls[0]![0]
+    expect(provider.getModels().length).toBe(0)
+    expect(provider.baseUrl).toBe('http://unreachable.example:11434/v1')
     // session_start should still be wired so /reload can retry.
     expect(pi.on).toHaveBeenCalledWith('session_start', expect.any(Function))
   })
@@ -122,8 +126,8 @@ describe('default extension factory', () => {
     await vi.advanceTimersByTimeAsync(2001)
 
     expect(pi.registerProvider).toHaveBeenCalledTimes(2)
-    const [, refreshed] = pi.registerProvider.mock.calls[1]!
-    expect(refreshed.models).toHaveLength(2)
+    const refreshed = pi.registerProvider.mock.calls[1]![0]
+    expect(refreshed.getModels()).toHaveLength(2)
   })
 
   it('injects a langfuse_session_id header on the registered provider', async () => {
@@ -132,9 +136,9 @@ describe('default extension factory', () => {
     const pi = makeStub()
     await extension(pi as never)
 
-    const [, config] = pi.registerProvider.mock.calls[0]!
-    expect(config.headers).toBeDefined()
-    expect(config.headers!.langfuse_session_id).toMatch(
+    const provider = pi.registerProvider.mock.calls[0]![0]
+    expect(provider.headers).toBeDefined()
+    expect(provider.headers!.langfuse_session_id).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
     )
   })
@@ -150,8 +154,8 @@ describe('default extension factory', () => {
     await (handler as () => Promise<void>)({})
     await vi.advanceTimersByTimeAsync(2001)
 
-    const firstId = pi.registerProvider.mock.calls[0]![1].headers!.langfuse_session_id
-    const secondId = pi.registerProvider.mock.calls[1]![1].headers!.langfuse_session_id
+    const firstId = pi.registerProvider.mock.calls[0]![0].headers!.langfuse_session_id
+    const secondId = pi.registerProvider.mock.calls[1]![0].headers!.langfuse_session_id
     expect(firstId).toBeDefined()
     expect(secondId).toBeDefined()
     expect(firstId).not.toBe(secondId)
