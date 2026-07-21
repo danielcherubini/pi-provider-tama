@@ -22,9 +22,7 @@ export interface TamaModelsResponse {
   models: TamaModel[]
 }
 
-/** Local mirrors of Pi runtime types not exposed by the peer dep stub.
- * @earendil-works/pi-coding-agent has these on ProviderConfig; mariozechner stub does not.
- */
+
 export interface RefreshModelsContext {
   credential?: unknown
   store: unknown
@@ -65,9 +63,5 @@ export interface PiProviderConfig {
   baseUrl: string
   api: string
   apiKey: string
-  compat: {
-    supportsDeveloperRole: boolean
-    supportsReasoningEffort: boolean
-  }
   models: PiModel[]
 }

@@ -166,10 +166,6 @@ export function buildPiProviderConfig(
     baseUrl: `${normalized}/v1`,
     api: 'openai-completions',
     apiKey: token || 'tama',
-    compat: {
-      supportsDeveloperRole: false,
-      supportsReasoningEffort: false,
-    },
     ...(sessionId ? { headers: { langfuse_session_id: sessionId } } : {}),
     models: tamaModels.map(transformModel),
   }

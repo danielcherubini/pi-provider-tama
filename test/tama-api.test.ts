@@ -156,10 +156,6 @@ describe('buildPiProviderConfig', () => {
     expect(config.baseUrl).toBe('http://127.0.0.1:11434/v1')
     expect(config.api).toBe('openai-completions')
     expect(config.apiKey).toBe('tama')
-    expect(config.compat).toEqual({
-      supportsDeveloperRole: false,
-      supportsReasoningEffort: false,
-    })
     expect(config.models).toHaveLength(2)
     expect(config.models[0]!.id).toBe('unsloth/qwen3.5-35b-a3b-gguf')
     expect(config.models[1]!.input).toEqual(['text', 'image'])

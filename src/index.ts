@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
-import type { ExtensionAPI, ProviderConfig } from '@mariozechner/pi-coding-agent'
+import type { ExtensionAPI } from '@earendil-works/pi-coding-agent'
 import { readCache, writeCache, computeConfigHash, isCacheStale } from './cache'
 import type { RefreshModelsContext, ProviderModelConfig, TamaModel } from './types'
 import { normalizeBaseURL, fetchTamaModels, buildPiProviderConfig, transformModel, autoDetectTama } from './tama-api'
@@ -64,8 +64,7 @@ async function registerWithModels(
     ...buildPiProviderConfig(baseURL, models, token, sessionId),
     refreshModels: buildRefreshModels(baseURL, configHash, token),
   }
-  // Cast because mariozechner stub lacks refreshModels; runtime @earendil-works has it.
-  pi.registerProvider(PROVIDER_NAME, config as unknown as ProviderConfig)
+  pi.registerProvider(PROVIDER_NAME, config)
   lastRegisteredModelIds = models.map(m => m.id).sort()
 }
 
