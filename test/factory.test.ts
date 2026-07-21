@@ -188,4 +188,112 @@ describe('cache-first factory', () => {
 
     expect(pi.registerProvider).toHaveBeenCalledTimes(2)
   })
+
+  it('cache exists but config hash changed → factory skips cache, background re-fetches after session_start delay', async () => {
+    process.env.TAMA_URL = 'http://test.example:5678'
+
+    // Cached entry has old configHash
+    const cachedModels: TamaModel[] = [
+      { id: 'old/model', name: 'Old Model' },
+    ]
+    vi.mocked(readCache).mockResolvedValue({
+      version: 1,
+      configHash: 'old-config-hash',
+      lastFetchedMs: Date.now() - 1000,
+      baseURL: 'http://127.0.0.1:9999',
+      models: cachedModels,
+    })
+    // Current config produces a different hash
+    vi.mocked(computeConfigHash).mockReturnValue('new-config-hash')
+    // isCacheStale returns true because hashes differ
+    vi.mocked(isCacheStale).mockReturnValue(true)
+
+    const pi = makeStub()
+    await extension(pi as never)
+
+    // Cache skipped due to hash mismatch, but TAMA_URL is set → registers empty provider
+    expect(pi.registerProvider).toHaveBeenCalledTimes(1)
+    const [initName, initConfig] = pi.registerProvider.mock.calls[0]!
+    expect(initName).toBe('tama')
+    expect((initConfig as { models: unknown[] }).models).toHaveLength(0)
+
+    // Trigger session_start → background update after 2s delay
+    vi.mocked(fetchTamaModels).mockResolvedValue([
+      { id: 'new/model', name: 'New Model' },
+    ])
+    const [, handler] = pi.on.mock.calls.find((c) => c[0] === 'session_start')!
+    await (handler as (event: { reason?: string }) => Promise<void>)({})
+    await vi.advanceTimersByTimeAsync(2001)
+
+    // Background fetch should have run and re-registered with fresh models (2nd call after initial empty)
+    expect(fetchTamaModels).toHaveBeenCalledWith('http://test.example:5678', undefined)
+    expect(pi.registerProvider).toHaveBeenCalledTimes(2)
+    const [name, config] = pi.registerProvider.mock.calls[1]!
+    expect(name).toBe('tama')
+    expect(config.models).toEqual([{ id: 'new/model', name: 'New Model' }])
+  })
+
+  it('empty Tama response doesn\'t overwrite valid cache', async () => {
+    // Cached entry with valid models
+    const cachedModels: TamaModel[] = [
+      { id: 'cached/model', name: 'Cached Model' },
+    ]
+    vi.mocked(readCache).mockResolvedValue({
+      version: 1,
+      configHash: 'test-hash',
+      lastFetchedMs: Date.now() - 1000,
+      baseURL: 'http://127.0.0.1:9999',
+      models: cachedModels,
+    })
+    vi.mocked(isCacheStale).mockReturnValue(false)
+
+    const pi = makeStub()
+    await extension(pi as never)
+
+    // Initial registration should use cache
+    expect(pi.registerProvider).toHaveBeenCalledTimes(1)
+    expect(writeCache).not.toHaveBeenCalled()
+
+    // Background fetch returns empty — should NOT write cache (don't clobber)
+    vi.mocked(fetchTamaModels).mockResolvedValue([])
+    const [, handler] = pi.on.mock.calls.find((c) => c[0] === 'session_start')!
+    await (handler as (event: { reason?: string }) => Promise<void>)({})
+    await vi.advanceTimersByTimeAsync(2001)
+
+    // writeCache should NOT have been called with empty models
+    expect(writeCache).not.toHaveBeenCalled()
+  })
+
+  it('multiple rapid session_start events don\'t crash', async () => {
+    process.env.TAMA_URL = 'http://test.example:5678'
+    vi.mocked(readCache).mockResolvedValue(null)
+
+    const pi = makeStub()
+    await extension(pi as never)
+
+    vi.mocked(fetchTamaModels).mockResolvedValue([
+      { id: 'model-1', name: 'Model 1' },
+    ])
+
+    // First session_start (simulates /reload — delay 0)
+    const [, handler] = pi.on.mock.calls.find((c) => c[0] === 'session_start')!
+    await (handler as (event: { reason?: string }) => Promise<void>)({ reason: 'reload' })
+    await vi.advanceTimersByTimeAsync(1)
+
+    expect(pi.registerProvider).toHaveBeenCalledTimes(2) // initial empty + reload update
+
+    // Second session_start (simulates /new — delay 2000ms, but we advance immediately)
+    // Simulate last-write-wins: new models
+    vi.mocked(fetchTamaModels).mockResolvedValue([
+      { id: 'model-2', name: 'Model 2' },
+    ])
+    await (handler as (event: { reason?: string }) => Promise<void>)({})
+    // Advance past the 2s delay
+    await vi.advanceTimersByTimeAsync(2001)
+
+    // Should have 3 total registrations: initial empty + reload update + new update
+    expect(pi.registerProvider).toHaveBeenCalledTimes(3)
+    const [name, config] = pi.registerProvider.mock.calls[2]!
+    expect(config.models).toEqual([{ id: 'model-2', name: 'Model 2' }])
+  })
 })
