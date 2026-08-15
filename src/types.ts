@@ -43,6 +43,14 @@ export interface PiCompat {
   supportsReasoningEffort?: boolean
   maxTokensField?: 'max_completion_tokens' | 'max_tokens'
   requiresToolResultName?: boolean
+  /**
+   * When true, pi sends a session-affinity header on every request carrying the
+   * pi session ID. Tama reads it (OpenRouter-style `x-session-id`) to group all
+   * traces of one pi session into a single Langfuse session.
+   */
+  sendSessionAffinityHeaders?: boolean
+  /** Which affinity header shape pi emits: `openrouter` = `x-session-id`. */
+  sessionAffinityFormat?: 'openai' | 'openai-nosession' | 'openrouter'
 }
 
 /** A model in pi's provider format. */

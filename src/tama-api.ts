@@ -32,6 +32,11 @@ const DEFAULT_COMPAT: PiCompat = {
   supportsDeveloperRole: false,
   supportsReasoningEffort: false,
   maxTokensField: 'max_tokens',
+  // Send the pi session ID as an OpenRouter-style `x-session-id` header so
+  // Tama can group all traces of one pi session into a single Langfuse session.
+  // (pi ignores provider-level headers, so this must be a per-model compat flag.)
+  sendSessionAffinityHeaders: true,
+  sessionAffinityFormat: 'openrouter',
 }
 
 /** Normalize a base URL by stripping trailing slashes and /v1 suffix. */
@@ -268,19 +273,16 @@ export function transformModel(model: TamaModel, baseUrl?: string): PiModel {
 export function buildPiProviderConfig(
   baseURL: string,
   tamaModels: TamaModel[],
-  token?: string,
-  sessionId?: string
+  token?: string
 ): PiProviderConfig {
   const normalized = normalizeBaseURL(baseURL)
 
-  // Build Langfuse session header. Tama forwards langfuse_session_id to Langfuse
-  // so all requests in one pi session group into a single trace session.
-  // One session ID per /reload — a new pi session gets a new group of traces.
+  // Session grouping for Langfuse now comes from the per-model compat flag
+  // (`sendSessionAffinityHeaders`) in transformModel, not a provider-level header.
   return {
     baseUrl: `${normalized}/v1`,
     api: 'openai-completions',
     apiKey: token || 'tama',
-    ...(sessionId ? { headers: { langfuse_session_id: sessionId } } : {}),
     models: tamaModels.map(m => transformModel(m)),
   }
 }
@@ -324,16 +326,14 @@ export async function resolveAndFetch(
  * Full discovery flow: detect tama, fetch models, return pi provider config.
  * Returns null when tama is not reachable or has no models.
  *
- * `sessionId` (a UUID) is injected as the `langfuse_session_id` header on all
- * requests so tama can group traces into a single Langfuse session. One ID
- * per pi session — a new UUID is generated on each call (e.g., on /reload).
+ * Langfuse session grouping is handled per-model via the
+ * `sendSessionAffinityHeaders` compat flag (see transformModel), not a provider-level header.
  */
 export async function discoverTamaForPi(
   tamaURL?: string,
-  token?: string,
-  sessionId?: string
+  token?: string
 ): Promise<PiProviderConfig | null> {
   const data = await resolveAndFetch(tamaURL, token)
   if (!data) return null
-  return buildPiProviderConfig(data.baseURL, data.models, token, sessionId)
+  return buildPiProviderConfig(data.baseURL, data.models, token)
 }

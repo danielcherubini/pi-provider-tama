@@ -1,5 +1,4 @@
 import { readFile } from 'node:fs/promises'
-import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { createProvider } from '@earendil-works/pi-ai'
@@ -57,7 +56,6 @@ function buildProvider(
   baseURL: string,
   models: TamaModel[],
   settings: Settings,
-  sessionId?: string,
   fetchModelsCb?: (context: RefreshModelsContext) => Promise<readonly Model<Api>[]>,
 ) {
   const normalizedBase = normalizeBaseURL(baseURL)
@@ -67,7 +65,6 @@ function buildProvider(
     id: 'tama',
     name: 'Tama',
     baseUrl: `${normalizedBase}/v1`,
-    headers: sessionId ? { langfuse_session_id: sessionId } : undefined,
     auth: {
       apiKey: {
         name: 'Tama API Token',
@@ -113,8 +110,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     return fresh.map(m => transformModel(m, `${normalizeBaseURL(targetURL)}/v1`)) as readonly Model<Api>[]
   }
 
-  const sessionId = randomUUID()
-  const provider = buildProvider(targetURL, models, settings, sessionId, fetchModelsCb)
+  const provider = buildProvider(targetURL, models, settings, fetchModelsCb)
   pi.registerProvider(provider)
   lastRegisteredFingerprint = fingerprint(models)
 
@@ -131,8 +127,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         const freshModels = await fetchTamaModels(targetURL, tamaToken)
         if (freshModels.length === 0 || !modelsChanged(freshModels)) return
 
-        const newSessionId = randomUUID()
-        const provider = buildProvider(targetURL, freshModels, settings, newSessionId, fetchModelsCb)
+        const provider = buildProvider(targetURL, freshModels, settings, fetchModelsCb)
         pi.registerProvider(provider)
         lastRegisteredFingerprint = fingerprint(freshModels)
       } catch (err) {

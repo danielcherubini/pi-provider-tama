@@ -131,38 +131,16 @@ describe('default extension factory', () => {
     expect(provider.getModels()).toHaveLength(2)
   })
 
-  it('injects a langfuse_session_id header on the registered provider', async () => {
+  it('does not set a provider-level session header (session grouping is per-model compat)', async () => {
     process.env.TAMA_URL = 'http://remote.example:11434'
 
     const pi = makeStub()
     await extension(pi as never)
 
+    // pi ignores provider-level headers, and the old langfuse_session_id header
+    // never worked. Session grouping now comes from the per-model compat flag set
+    // by transformModel (covered in tama-api.test.ts), so no provider headers here.
     const provider = pi.registerProvider.mock.calls[0]![0]
-    expect(provider.headers).toBeDefined()
-    expect(provider.headers!.langfuse_session_id).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
-    )
-  })
-
-  it('generates a fresh session ID on each registration cycle (initial + reload)', async () => {
-    process.env.TAMA_URL = 'http://remote.example:11434'
-    // Initial fetch returns empty
-    vi.mocked(fetchTamaModels).mockResolvedValue([])
-
-    const pi = makeStub()
-    await extension(pi as never)
-
-    // Now set up mock for reload — different models triggers re-registration
-    mockTamaResponse([{ id: 'test/model', name: 'Test' }])
-
-    const [, handler] = pi.on.mock.calls.find((c) => c[0] === 'session_start')!
-    await (handler as (event: { reason?: string }) => Promise<void>)({ reason: 'reload' })
-    await vi.advanceTimersByTimeAsync(1)
-
-    const firstId = pi.registerProvider.mock.calls[0]![0].headers!.langfuse_session_id
-    const secondId = pi.registerProvider.mock.calls[1]![0].headers!.langfuse_session_id
-    expect(firstId).toBeDefined()
-    expect(secondId).toBeDefined()
-    expect(firstId).not.toBe(secondId)
+    expect(provider.headers).toBeUndefined()
   })
 })

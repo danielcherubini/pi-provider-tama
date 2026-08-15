@@ -202,6 +202,8 @@ describe('transformModel', () => {
         supportsDeveloperRole: false,
         supportsReasoningEffort: false,
         maxTokensField: 'max_tokens',
+        sendSessionAffinityHeaders: true,
+        sessionAffinityFormat: 'openrouter',
       },
       provider: 'tama',
       api: 'openai-completions',
@@ -216,6 +218,8 @@ describe('transformModel', () => {
       supportsReasoningEffort: false,
       maxTokensField: 'max_tokens',
       requiresToolResultName: false,
+      sendSessionAffinityHeaders: true,
+      sessionAffinityFormat: 'openrouter',
     })
   })
 
@@ -226,6 +230,8 @@ describe('transformModel', () => {
       supportsDeveloperRole: false,
       supportsReasoningEffort: false,
       maxTokensField: 'max_tokens',
+      sendSessionAffinityHeaders: true,
+      sessionAffinityFormat: 'openrouter',
     })
   })
 
@@ -236,7 +242,18 @@ describe('transformModel', () => {
       supportsDeveloperRole: false,
       supportsReasoningEffort: false,
       maxTokensField: 'max_tokens',
+      sendSessionAffinityHeaders: true,
+      sessionAffinityFormat: 'openrouter',
     })
+  })
+
+  it('enables OpenRouter-style session affinity headers for Langfuse session grouping', () => {
+    // pi sends `x-session-id: <pi session id>` on every request when these are set.
+    // Tama reads that header and groups traces into a single Langfuse session,
+    // replacing the old (never-honored) provider-level langfuse_session_id header.
+    const result = transformModel(baseModel)
+    expect(result.compat?.sendSessionAffinityHeaders).toBe(true)
+    expect(result.compat?.sessionAffinityFormat).toBe('openrouter')
   })
 
   it('includes baseUrl when provided as second argument', () => {
@@ -310,6 +327,8 @@ describe('transformModel', () => {
       supportsDeveloperRole: false,
       supportsReasoningEffort: true,
       maxTokensField: 'max_tokens',
+      sendSessionAffinityHeaders: true,
+      sessionAffinityFormat: 'openrouter',
     })
   })
 
@@ -367,6 +386,8 @@ describe('transformModel', () => {
       supportsReasoningEffort: true,
       maxTokensField: 'max_tokens',
       requiresToolResultName: false,
+      sendSessionAffinityHeaders: true,
+      sessionAffinityFormat: 'openrouter',
     })
   })
 
@@ -386,6 +407,8 @@ describe('transformModel', () => {
       supportsDeveloperRole: false,
       supportsReasoningEffort: true,
       maxTokensField: 'max_tokens',
+      sendSessionAffinityHeaders: true,
+      sessionAffinityFormat: 'openrouter',
     })
     expect(result.thinkingLevelMap).toEqual({
       off: 'none',
@@ -423,6 +446,8 @@ describe('transformModel', () => {
         supportsDeveloperRole: false,
         supportsReasoningEffort: false,
         maxTokensField: 'max_tokens',
+        sendSessionAffinityHeaders: true,
+        sessionAffinityFormat: 'openrouter',
       },
       provider: 'tama',
       api: 'openai-completions',
@@ -804,65 +829,17 @@ describe('discoverTamaForPi', () => {
     }
   })
 
-  // ---- Langfuse session header ----
+  // ---- Langfuse session grouping (via per-model compat flag) ----
 
-  it('buildPiProviderConfig sets langfuse_session_id when sessionId provided', () => {
-    const config = buildPiProviderConfig(
-      'http://127.0.0.1:11434',
-      [{ id: 'test/model', name: 'Test', context_length: 8192 }],
-      undefined,
-      'my-session-uuid'
-    )
-    expect(config.headers).toEqual({ langfuse_session_id: 'my-session-uuid' })
-  })
-
-  it('buildPiProviderConfig omits headers when no sessionId', () => {
+  it('buildPiProviderConfig no longer emits a provider-level session header', () => {
+    // Session grouping moved to the per-model `sendSessionAffinityHeaders` compat
+    // flag (pi sends x-session-id); the old provider-level langfuse_session_id
+    // header was never honored by pi and is gone.
     const config = buildPiProviderConfig('http://127.0.0.1:11434', [
       { id: 'test/model', name: 'Test', context_length: 8192 },
     ])
-    expect(config.headers).toBeUndefined()
-  })
-
-  it('buildPiProviderConfig threads sessionId alongside token', () => {
-    const config = buildPiProviderConfig(
-      'http://127.0.0.1:11434',
-      [{ id: 'test/model', name: 'Test', context_length: 8192 }],
-      'tok',
-      'session-123'
-    )
-    expect(config.apiKey).toBe('tok')
-    expect(config.headers).toEqual({ langfuse_session_id: 'session-123' })
-  })
-
-  it('discoverTamaForPi passes sessionId through to config', async () => {
-    const body = {
-      models: [{ id: 'test/model', name: 'Test', context_length: 8192 }],
-    }
-    vi.mocked(fetch).mockResolvedValue(
-      new Response(JSON.stringify(body), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      })
-    )
-
-    const config = await discoverTamaForPi('http://localhost:11434', undefined, 'sess-abc')
-    expect(config).not.toBeNull()
-    expect(config!.headers).toEqual({ langfuse_session_id: 'sess-abc' })
-  })
-
-  it('discoverTamaForPi produces config without headers when no sessionId', async () => {
-    const body = {
-      models: [{ id: 'test/model', name: 'Test', context_length: 8192 }],
-    }
-    vi.mocked(fetch).mockResolvedValue(
-      new Response(JSON.stringify(body), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      })
-    )
-
-    const config = await discoverTamaForPi('http://localhost:11434')
-    expect(config).not.toBeNull()
-    expect(config!.headers).toBeUndefined()
+    expect((config as { headers?: unknown }).headers).toBeUndefined()
+    // The compat flag is what drives session grouping now.
+    expect(config.models[0].compat?.sendSessionAffinityHeaders).toBe(true)
   })
 })
