@@ -13,6 +13,9 @@ const STANDARD_LEVELS = ['minimal', 'low', 'medium', 'high'] as const
 const EXTENDED_LEVELS = ['xhigh', 'max'] as const
 const KNOWN_LEVELS: readonly string[] = [...STANDARD_LEVELS, ...EXTENDED_LEVELS]
 
+/** pi's full thinking-level vocabulary, including `off`. */
+const PI_THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
+
 /** Backend-specific compatibility overrides. */
 const BACKEND_COMPAT: Record<string, PiCompat> = {
   'llama.cpp': {
@@ -170,6 +173,36 @@ export function buildThinkingLevelMap(variants?: string[]): ThinkingLevelMap | u
   return Object.keys(map).length > 0 ? map : undefined
 }
 
+/**
+ * Build pi's thinkingLevelMap from tama's editor-configured reasoningLevels.
+ * - each pi level in the list → itself, EXCEPT "off" → "none"
+ *   (tama repo ADR-0009: no backend accepts "off" as reasoning_effort)
+ * - each pi level NOT in the list → null (explicit hole — absent keys would mean "supported" in pi)
+ * - levels outside pi's vocabulary are dropped (tama validates server-side; this is defensive)
+ * - absent/empty input, or no recognizable names → undefined (pi defaults apply)
+ */
+export function buildThinkingLevelMapFromLevels(levels?: string[]): ThinkingLevelMap | undefined {
+  if (!levels || levels.length === 0) return undefined
+  // Intentionally silent (unlike the variants path): tama validates these names server-side,
+  // so no warning here.
+  const known = new Set(
+    levels.filter((l) => (PI_THINKING_LEVELS as readonly string[]).includes(l))
+  )
+  if (known.size === 0) return undefined
+
+  const map: ThinkingLevelMap = {}
+  for (const level of PI_THINKING_LEVELS) {
+    if (!known.has(level)) {
+      map[level] = null
+    } else if (level === 'off') {
+      map[level] = 'none'
+    } else {
+      map[level] = level
+    }
+  }
+  return map
+}
+
 /** Transform a single tama model into pi's model format. */
 export function transformModel(model: TamaModel): PiModel
 export function transformModel(model: TamaModel, baseUrl: string): PiModel & { baseUrl: string }
@@ -189,9 +222,16 @@ export function transformModel(model: TamaModel, baseUrl?: string): PiModel {
 
   const backendCompat = model.backend ? BACKEND_COMPAT[model.backend] : undefined
 
-  // Reasoning: expose tama variants as pi thinking levels. pi sends
-  // reasoning_effort only when model.reasoning && compat.supportsReasoningEffort.
-  const isReasoning = model.reasoning === true
+  // Reasoning: editor-configured levels (tama plan-189) are the authoritative
+  // source and take priority; otherwise the legacy variants path (plan-004)
+  // runs unchanged. An all-out-of-vocabulary list yields no usable map and
+  // likewise falls back to the legacy path (reasoning then comes from
+  // model.reasoning alone). pi sends reasoning_effort only when model.reasoning &&
+  // compat.supportsReasoningEffort.
+  const hasLevels =
+    (model.supportsReasoningEffort ?? false) && (model.reasoningLevels?.length ?? 0) > 0
+  const levelsMap = hasLevels ? buildThinkingLevelMapFromLevels(model.reasoningLevels) : undefined
+  const isReasoning = levelsMap !== undefined || model.reasoning === true
   if (isReasoning) {
     for (const variant of model.variants ?? []) {
       if (!KNOWN_LEVELS.includes(variant)) {
@@ -201,7 +241,7 @@ export function transformModel(model: TamaModel, baseUrl?: string): PiModel {
       }
     }
   }
-  const thinkingLevelMap = isReasoning ? buildThinkingLevelMap(model.variants) : undefined
+  const thinkingLevelMap = levelsMap ?? (isReasoning ? buildThinkingLevelMap(model.variants) : undefined)
 
   return {
     id: model.id,

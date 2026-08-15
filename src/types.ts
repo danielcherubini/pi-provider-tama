@@ -21,6 +21,14 @@ export interface TamaModel {
   reasoning?: boolean
   /** Named reasoning-effort overlays. Names are expected from pi's thinking-level vocabulary. */
   variants?: string[]
+  /** Whether the model accepts reasoning-effort control. camelCase, as emitted by tama's /v1/opencode/models. Absent/undefined = false. */
+  supportsReasoningEffort?: boolean
+  /**
+   * Editor-configured reasoning levels, in pi's 7-level vocabulary
+   * (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`). camelCase,
+   * as emitted by tama's /v1/opencode/models. Absent when the model has no levels.
+   */
+  reasoningLevels?: string[]
 }
 
 /** Response from tama's /v1/opencode/models endpoint. */

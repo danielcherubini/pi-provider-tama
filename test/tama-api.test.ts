@@ -3,6 +3,7 @@ import {
   normalizeBaseURL,
   buildAPIURL,
   buildThinkingLevelMap,
+  buildThinkingLevelMapFromLevels,
   transformModel,
   buildPiProviderConfig,
   checkTamaHealth,
@@ -113,6 +114,70 @@ describe('buildThinkingLevelMap', () => {
       minimal: null,
       low: null,
       medium: null,
+    })
+  })
+})
+
+describe('buildThinkingLevelMapFromLevels', () => {
+  it('returns undefined for undefined input', () => {
+    expect(buildThinkingLevelMapFromLevels(undefined)).toBeUndefined()
+  })
+
+  it('returns undefined for empty array', () => {
+    expect(buildThinkingLevelMapFromLevels([])).toBeUndefined()
+  })
+
+  it('maps present levels to themselves and nulled holes for absent ones', () => {
+    expect(buildThinkingLevelMapFromLevels(['off', 'low', 'medium', 'xhigh'])).toEqual({
+      off: 'none',
+      minimal: null,
+      low: 'low',
+      medium: 'medium',
+      high: null,
+      xhigh: 'xhigh',
+      max: null,
+    })
+  })
+
+  it('translates off to the wire string none', () => {
+    expect(buildThinkingLevelMapFromLevels(['off'])).toEqual({
+      off: 'none',
+      minimal: null,
+      low: null,
+      medium: null,
+      high: null,
+      xhigh: null,
+      max: null,
+    })
+  })
+
+  it('drops levels outside pi vocabulary', () => {
+    expect(buildThinkingLevelMapFromLevels(['off', 'ultra'])).toEqual({
+      off: 'none',
+      minimal: null,
+      low: null,
+      medium: null,
+      high: null,
+      xhigh: null,
+      max: null,
+    })
+  })
+
+  it('returns undefined when all names are outside pi vocabulary (parity with buildThinkingLevelMap)', () => {
+    expect(buildThinkingLevelMapFromLevels(['ultra'])).toBeUndefined()
+  })
+
+  it('maps the full vocabulary with off as none', () => {
+    expect(
+      buildThinkingLevelMapFromLevels(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+    ).toEqual({
+      off: 'none',
+      minimal: 'minimal',
+      low: 'low',
+      medium: 'medium',
+      high: 'high',
+      xhigh: 'xhigh',
+      max: 'max',
     })
   })
 })
@@ -308,6 +373,129 @@ describe('transformModel', () => {
   it('always sets cost to zero', () => {
     const result = transformModel(baseModel)
     expect(result.cost).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 })
+  })
+
+  it('builds thinkingLevelMap from editor-configured reasoningLevels (off → none)', () => {
+    const result = transformModel({
+      ...baseModel,
+      supportsReasoningEffort: true,
+      reasoningLevels: ['off', 'low', 'medium', 'xhigh'],
+    })
+    expect(result.reasoning).toBe(true)
+    expect(result.compat).toEqual({
+      supportsDeveloperRole: false,
+      supportsReasoningEffort: true,
+      maxTokensField: 'max_tokens',
+    })
+    expect(result.thinkingLevelMap).toEqual({
+      off: 'none',
+      minimal: null,
+      low: 'low',
+      medium: 'medium',
+      high: null,
+      xhigh: 'xhigh',
+      max: null,
+    })
+  })
+
+  it('falls back to model.reasoning when all reasoningLevels are unknown', () => {
+    const result = transformModel({
+      ...baseModel,
+      supportsReasoningEffort: true,
+      reasoningLevels: ['ultra'],
+    })
+    expect(result.reasoning).toBe(false)
+    expect('thinkingLevelMap' in result).toBe(false)
+    expect(result.compat.supportsReasoningEffort).toBe(false)
+  })
+
+  it('keeps legacy output byte-identical when new level fields are absent', () => {
+    const result = transformModel({ ...baseModel, reasoning: false })
+    expect(result).toEqual({
+      id: 'unsloth/qwen3.5-35b-a3b-gguf',
+      name: 'Unsloth: Qwen3.5 35B A3B',
+      reasoning: false,
+      input: ['text'],
+      contextWindow: 128000,
+      maxTokens: 8000,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      compat: {
+        supportsDeveloperRole: false,
+        supportsReasoningEffort: false,
+        maxTokensField: 'max_tokens',
+      },
+      provider: 'tama',
+      api: 'openai-completions',
+    })
+    expect('thinkingLevelMap' in result).toBe(false)
+  })
+
+  it('does not enable reasoning when reasoningLevels is empty (supportsReasoningEffort true)', () => {
+    const result = transformModel({ ...baseModel, supportsReasoningEffort: true, reasoningLevels: [] })
+    expect(result.reasoning).toBe(false)
+    expect('thinkingLevelMap' in result).toBe(false)
+    expect(result.compat.supportsReasoningEffort).toBe(false)
+  })
+
+  it('ignores reasoningLevels when supportsReasoningEffort is false', () => {
+    const result = transformModel({ ...baseModel, supportsReasoningEffort: false, reasoningLevels: ['low'] })
+    expect(result.reasoning).toBe(false)
+    expect('thinkingLevelMap' in result).toBe(false)
+    expect(result.compat.supportsReasoningEffort).toBe(false)
+  })
+
+  it('drops unknown levels from reasoningLevels', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const result = transformModel({
+      ...baseModel,
+      supportsReasoningEffort: true,
+      reasoningLevels: ['off', 'ultra'],
+    })
+    expect(warn).not.toHaveBeenCalled()
+    expect(result.reasoning).toBe(true)
+    expect(result.thinkingLevelMap).toEqual({
+      off: 'none',
+      minimal: null,
+      low: null,
+      medium: null,
+      high: null,
+      xhigh: null,
+      max: null,
+    })
+    warn.mockRestore()
+  })
+
+  it('prefers reasoningLevels over variants when both are present', () => {
+    const result = transformModel({
+      ...baseModel,
+      reasoning: true,
+      variants: ['high'],
+      supportsReasoningEffort: true,
+      reasoningLevels: ['low'],
+    })
+    expect(result.reasoning).toBe(true)
+    expect(result.thinkingLevelMap).toEqual({
+      off: null,
+      minimal: null,
+      low: 'low',
+      medium: null,
+      high: null,
+      xhigh: null,
+      max: null,
+    })
+    expect(result.compat!.supportsReasoningEffort).toBe(true)
+  })
+
+  it('falls back to variants mapping when levels fields are absent', () => {
+    const result = transformModel({ ...baseModel, reasoning: true, variants: ['low', 'xhigh'] })
+    expect(result.reasoning).toBe(true)
+    expect(result.thinkingLevelMap).toEqual({
+      minimal: null,
+      medium: null,
+      high: null,
+      xhigh: 'xhigh',
+    })
+    expect(result.compat!.supportsReasoningEffort).toBe(true)
   })
 })
 

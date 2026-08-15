@@ -158,26 +158,33 @@ Discovered models are mapped to pi's provider format:
 | `limit.output`                      | `maxTokens`     | `contextWindow / 16` or `8192`|
 | `modalities.input`                  | `input`         | `["text"]`                    |
 | `reasoning`                          | `reasoning`       | `false`                     |
+| `supportsReasoningEffort` + `reasoningLevels` (editor-configured) | `reasoning` / `thinkingLevelMap` | falls back to `variants` when absent |
 | `variants` (reasoning models only)    | `thinkingLevelMap` | omitted (pi default levels)  |
 
 All models are registered with:
 
 - `api: "openai-completions"` (OpenAI-compatible)
-- `reasoning: false` — except models that report `"reasoning": true` on the endpoint, which are registered with `reasoning: true` and a `thinkingLevelMap` built from `variants` (see [Reasoning & thinking levels](#reasoning--thinking-levels))
+- `reasoning: false` — except models that report `"reasoning": true` or carry editor-configured `reasoningLevels` (with `supportsReasoningEffort: true`) on the endpoint, which are registered with `reasoning: true` and a `thinkingLevelMap` (built from `reasoningLevels` when present, else from `variants`; see [Reasoning & thinking levels](#reasoning--thinking-levels))
 - `cost: { input: 0, output: 0, ... }` (local = free)
 - `compat:` merged from default + backend-specific overrides (see [Backend-aware compat](#backend-aware-per-model-compat))
 - `provider: "tama"`, `api: "openai-completions"` for pi's internal routing
 
 ### Reasoning & thinking levels
 
-Tama models that report `"reasoning": true` on `/v1/opencode/models` are registered in pi with thinking-level support. The optional `variants` array (named reasoning-effort overlays) maps onto pi's thinking levels:
+Tama models that report `"reasoning": true` (or carry editor-configured levels) are registered in pi with thinking-level support. Two sources feed the offered thinking levels, in priority order:
 
-- Each variant name from pi's vocabulary (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`) is offered as a thinking level in pi's picker.
-- When the user picks a level, pi sends `reasoning_effort: "<level>"` in the chat-completions request body. **Tama's chat endpoint must consume `reasoning_effort` and apply the matching variant.**
-- Picking `off` sends no `reasoning_effort` field — tama runs its default behavior.
-- Variant names outside pi's vocabulary are ignored with a warning in pi's console.
-- `reasoning: true` without `variants` offers pi's default levels (`off`–`high`).
-- Models without `reasoning` (or on older tama servers that omit the field) behave exactly as before.
+1. **Editor-configured levels (`supportsReasoningEffort` + `reasoningLevels`).** When a model carries a non-empty `reasoningLevels` array (with `supportsReasoningEffort: true`), those levels — from pi's 7-level vocabulary `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` — are the authoritative source and **take priority over `variants`**. The resulting `thinkingLevelMap`:
+   - offers each listed level in pi's picker. Picking one sends `reasoning_effort: "<level>"` in the chat-completions request body — **except `off`, which is sent as `reasoning_effort: "none"`** (no backend accepts the literal string `off`; e.g. llama.cpp would silently leave thinking on).
+   - explicitly hides every unlisted level by mapping it to `null` (pi treats an *absent* map key on a `reasoning: true` model as "supported via provider default", so unlisted levels must be nulled to stay hidden).
+   - Levels outside pi's vocabulary are dropped defensively (tama validates them server-side).
+2. **Variants fallback (`variants`).** When the levels fields are absent, the optional `variants` array (named reasoning-effort overlays) maps onto pi's thinking levels as before:
+   - Each variant name from pi's vocabulary (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`) is offered as a thinking level in pi's picker.
+   - When the user picks a level, pi sends `reasoning_effort: "<level>"` in the chat-completions request body. **Tama's chat endpoint must consume `reasoning_effort` and apply the matching variant.**
+   - Picking `off` sends no `reasoning_effort` field — tama runs its default behavior.
+   - Variant names outside pi's vocabulary are ignored with a warning in pi's console.
+   - `reasoning: true` without `variants` offers pi's default levels (`off`–`high`).
+
+Models without any of these fields (or on older tama servers that omit them) behave exactly as before.
 
 ## Migrating from pi-tama
 
