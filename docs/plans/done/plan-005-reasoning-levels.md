@@ -1,6 +1,6 @@
 # Editor-Configured Reasoning Levels Plan
 
-**Status:** ✅ Completed (0.16.0) — companion to tama's plan-189 (`feature/189-model-reasoning-effort`, commits `d5ed478a..ef9821a4`)
+**Status:** ✅ Completed (0.16.0) — companion to tama's plan-189 (squashed to tama main as `6f26ba8b`)
 
 **Goal:** Map the new editor-configured `supportsReasoningEffort` / `reasoningLevels` fields emitted by tama's `/v1/opencode/models` endpoint into pi's `thinkingLevelMap`, taking priority over the existing `variants` fallback.
 
