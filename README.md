@@ -157,14 +157,27 @@ Discovered models are mapped to pi's provider format:
 | `context_length` or `limit.context` | `contextWindow` | `128000`                      |
 | `limit.output`                      | `maxTokens`     | `contextWindow / 16` or `8192`|
 | `modalities.input`                  | `input`         | `["text"]`                    |
+| `reasoning`                          | `reasoning`       | `false`                     |
+| `variants` (reasoning models only)    | `thinkingLevelMap` | omitted (pi default levels)  |
 
 All models are registered with:
 
 - `api: "openai-completions"` (OpenAI-compatible)
-- `reasoning: false`
+- `reasoning: false` — except models that report `"reasoning": true` on the endpoint, which are registered with `reasoning: true` and a `thinkingLevelMap` built from `variants` (see [Reasoning & thinking levels](#reasoning--thinking-levels))
 - `cost: { input: 0, output: 0, ... }` (local = free)
 - `compat:` merged from default + backend-specific overrides (see [Backend-aware compat](#backend-aware-per-model-compat))
 - `provider: "tama"`, `api: "openai-completions"` for pi's internal routing
+
+### Reasoning & thinking levels
+
+Tama models that report `"reasoning": true` on `/v1/opencode/models` are registered in pi with thinking-level support. The optional `variants` array (named reasoning-effort overlays) maps onto pi's thinking levels:
+
+- Each variant name from pi's vocabulary (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`) is offered as a thinking level in pi's picker.
+- When the user picks a level, pi sends `reasoning_effort: "<level>"` in the chat-completions request body. **Tama's chat endpoint must consume `reasoning_effort` and apply the matching variant.**
+- Picking `off` sends no `reasoning_effort` field — tama runs its default behavior.
+- Variant names outside pi's vocabulary are ignored with a warning in pi's console.
+- `reasoning: true` without `variants` offers pi's default levels (`off`–`high`).
+- Models without `reasoning` (or on older tama servers that omit the field) behave exactly as before.
 
 ## Migrating from pi-tama
 

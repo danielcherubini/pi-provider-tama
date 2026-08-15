@@ -13,7 +13,7 @@ import { resolveTamaAuth, loginTama } from './auth'
 const SETTINGS_PATH = join(homedir(), '.pi', 'agent', 'settings.json')
 
 // Module-level state — reset at factory start to avoid test pollution / stale state across reloads.
-let lastRegisteredModelIds: string[] = []
+let lastRegisteredFingerprint: string = ''
 let refreshTimer: ReturnType<typeof setTimeout> | undefined
 
 interface Settings {
@@ -34,10 +34,22 @@ async function readSettings(): Promise<Settings> {
   }
 }
 
+/** Fingerprint the model list for change detection: id + reasoning (+ variants when reasoning). */
+function fingerprint(models: TamaModel[]): string {
+  return models
+    .map((m) =>
+      JSON.stringify([
+        m.id,
+        m.reasoning ? 1 : 0,
+        m.reasoning ? [...(m.variants ?? [])].sort() : [],
+      ])
+    )
+    .sort()
+    .join(';')
+}
+
 function modelsChanged(newModels: TamaModel[]): boolean {
-  const newIds = newModels.map(m => m.id).sort().join(',')
-  const oldIds = lastRegisteredModelIds.join(',')
-  return newIds !== oldIds
+  return fingerprint(newModels) !== lastRegisteredFingerprint
 }
 
 /** Build a createProvider() Provider object for the tama provider. */
@@ -71,7 +83,7 @@ function buildProvider(
 
 export default async function (pi: ExtensionAPI): Promise<void> {
   // Reset module-level state to avoid stale data across reloads / test pollution
-  lastRegisteredModelIds = []
+  lastRegisteredFingerprint = ''
   refreshTimer = undefined
 
   const settings = await readSettings()
@@ -104,7 +116,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   const sessionId = randomUUID()
   const provider = buildProvider(targetURL, models, settings, sessionId, fetchModelsCb)
   pi.registerProvider(provider)
-  lastRegisteredModelIds = models.map(m => m.id).sort()
+  lastRegisteredFingerprint = fingerprint(models)
 
   // Background refresh on reload only (pi has cached models for other reasons)
   pi.on('session_start', async (event) => {
@@ -122,7 +134,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         const newSessionId = randomUUID()
         const provider = buildProvider(targetURL, freshModels, settings, newSessionId, fetchModelsCb)
         pi.registerProvider(provider)
-        lastRegisteredModelIds = freshModels.map(m => m.id).sort()
+        lastRegisteredFingerprint = fingerprint(freshModels)
       } catch (err) {
         console.warn(`[pi-provider-tama] Background refresh failed: ${err instanceof Error ? err.message : String(err)}`)
       }

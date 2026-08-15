@@ -213,6 +213,116 @@ describe('fetch-in-factory', () => {
     expect(pi.registerProvider).toHaveBeenCalledTimes(1) // still 1, no re-registration
   })
 
+  it('reload re-registers when reasoning capability changes on the same model ids', async () => {
+    process.env.TAMA_URL = 'http://test.example:5678'
+    vi.mocked(fetchTamaModels).mockResolvedValue([
+      { id: 'model/one', name: 'Model One' },
+    ])
+
+    const pi = makeStub()
+    await extension(pi as never)
+
+    expect(pi.registerProvider).toHaveBeenCalledTimes(1)
+
+    // Same ids, but the model now reports reasoning + variants
+    vi.mocked(fetchTamaModels).mockResolvedValue([
+      { id: 'model/one', name: 'Model One', reasoning: true, variants: ['high', 'max'] },
+    ])
+    const [, handler] = pi.on.mock.calls.find((c) => c[0] === 'session_start')!
+    await (handler as (event: { reason?: string }) => Promise<void>)({ reason: 'reload' })
+    await vi.advanceTimersByTimeAsync(1)
+
+    expect(pi.registerProvider).toHaveBeenCalledTimes(2)
+  })
+
+  it('reload re-registers when variants change on a reasoning model', async () => {
+    process.env.TAMA_URL = 'http://test.example:5678'
+    vi.mocked(fetchTamaModels).mockResolvedValue([
+      { id: 'model/one', name: 'Model One', reasoning: true, variants: ['high'] },
+    ])
+
+    const pi = makeStub()
+    await extension(pi as never)
+
+    expect(pi.registerProvider).toHaveBeenCalledTimes(1)
+
+    // Same id, reasoning still true — only variants grew
+    vi.mocked(fetchTamaModels).mockResolvedValue([
+      { id: 'model/one', name: 'Model One', reasoning: true, variants: ['high', 'max'] },
+    ])
+    const [, handler] = pi.on.mock.calls.find((c) => c[0] === 'session_start')!
+    await (handler as (event: { reason?: string }) => Promise<void>)({ reason: 'reload' })
+    await vi.advanceTimersByTimeAsync(1)
+
+    expect(pi.registerProvider).toHaveBeenCalledTimes(2)
+  })
+
+  it('reload re-registers when reasoning is removed (true → false)', async () => {
+    process.env.TAMA_URL = 'http://test.example:5678'
+    vi.mocked(fetchTamaModels).mockResolvedValue([
+      { id: 'model/one', name: 'Model One', reasoning: true, variants: ['high', 'max'] },
+    ])
+
+    const pi = makeStub()
+    await extension(pi as never)
+
+    expect(pi.registerProvider).toHaveBeenCalledTimes(1)
+
+    // Same id, but reasoning capability removed
+    vi.mocked(fetchTamaModels).mockResolvedValue([
+      { id: 'model/one', name: 'Model One', reasoning: false },
+    ])
+    const [, handler] = pi.on.mock.calls.find((c) => c[0] === 'session_start')!
+    await (handler as (event: { reason?: string }) => Promise<void>)({ reason: 'reload' })
+    await vi.advanceTimersByTimeAsync(1)
+
+    expect(pi.registerProvider).toHaveBeenCalledTimes(2)
+  })
+
+  it('reload skips re-registration when only variants of a non-reasoning model change', async () => {
+    process.env.TAMA_URL = 'http://test.example:5678'
+    vi.mocked(fetchTamaModels).mockResolvedValue([
+      { id: 'model/one', name: 'Model One', variants: ['turbo'] },
+    ])
+
+    const pi = makeStub()
+    await extension(pi as never)
+
+    expect(pi.registerProvider).toHaveBeenCalledTimes(1)
+
+    // Non-reasoning model: variant churn must not affect the fingerprint
+    vi.mocked(fetchTamaModels).mockResolvedValue([
+      { id: 'model/one', name: 'Model One', variants: ['turbo', 'max'] },
+    ])
+    const [, handler] = pi.on.mock.calls.find((c) => c[0] === 'session_start')!
+    await (handler as (event: { reason?: string }) => Promise<void>)({ reason: 'reload' })
+    await vi.advanceTimersByTimeAsync(1)
+
+    expect(pi.registerProvider).toHaveBeenCalledTimes(1) // still 1, no re-registration
+  })
+
+  it('reload skips re-registration when variant order changes but content is identical', async () => {
+    process.env.TAMA_URL = 'http://test.example:5678'
+    vi.mocked(fetchTamaModels).mockResolvedValue([
+      { id: 'model/one', name: 'Model One', reasoning: true, variants: ['high', 'max'] },
+    ])
+
+    const pi = makeStub()
+    await extension(pi as never)
+
+    expect(pi.registerProvider).toHaveBeenCalledTimes(1)
+
+    // Same variants in different order — fingerprint sorts, so no change
+    vi.mocked(fetchTamaModels).mockResolvedValue([
+      { id: 'model/one', name: 'Model One', reasoning: true, variants: ['max', 'high'] },
+    ])
+    const [, handler] = pi.on.mock.calls.find((c) => c[0] === 'session_start')!
+    await (handler as (event: { reason?: string }) => Promise<void>)({ reason: 'reload' })
+    await vi.advanceTimersByTimeAsync(1)
+
+    expect(pi.registerProvider).toHaveBeenCalledTimes(1) // still 1, no re-registration
+  })
+
   it('passes fetchModels callback to createProvider for pi persistence', async () => {
     process.env.TAMA_URL = 'http://test.example:5678'
     vi.mocked(fetchTamaModels).mockResolvedValue([])

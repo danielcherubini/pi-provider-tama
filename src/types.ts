@@ -1,3 +1,5 @@
+import type { ThinkingLevelMap } from '@earendil-works/pi-ai'
+
 /** Model as returned by tama's /v1/opencode/models endpoint. */
 export interface TamaModel {
   id: string
@@ -15,6 +17,10 @@ export interface TamaModel {
   }
   quant?: string
   gpu_layers?: number
+  /** Whether the model supports reasoning (thinking). Absent/undefined = false. */
+  reasoning?: boolean
+  /** Named reasoning-effort overlays. Names are expected from pi's thinking-level vocabulary. */
+  variants?: string[]
 }
 
 /** Response from tama's /v1/opencode/models endpoint. */
@@ -36,6 +42,7 @@ export interface PiModel {
   id: string
   name: string
   reasoning: boolean
+  thinkingLevelMap?: ThinkingLevelMap
   input: ('text' | 'image')[]
   contextWindow: number
   maxTokens: number

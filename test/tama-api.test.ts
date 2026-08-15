@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
   normalizeBaseURL,
   buildAPIURL,
+  buildThinkingLevelMap,
   transformModel,
   buildPiProviderConfig,
   checkTamaHealth,
@@ -54,6 +55,65 @@ describe('buildAPIURL', () => {
     expect(buildAPIURL('http://localhost:11434', '/health')).toBe(
       'http://localhost:11434/health'
     )
+  })
+})
+
+describe('buildThinkingLevelMap', () => {
+  it('returns undefined for undefined input', () => {
+    expect(buildThinkingLevelMap(undefined)).toBeUndefined()
+  })
+
+  it('returns undefined for empty array', () => {
+    expect(buildThinkingLevelMap([])).toBeUndefined()
+  })
+
+  it('returns undefined when no name is recognizable', () => {
+    expect(buildThinkingLevelMap(['turbo'])).toBeUndefined()
+  })
+
+  it('nulls absent standard levels and adds explicit extended levels', () => {
+    expect(buildThinkingLevelMap(['high', 'max'])).toEqual({
+      minimal: null,
+      low: null,
+      medium: null,
+      max: 'max',
+    })
+  })
+
+  it('omits matching standard levels (pi default applies)', () => {
+    expect(buildThinkingLevelMap(['low', 'high'])).toEqual({
+      minimal: null,
+      medium: null,
+    })
+  })
+
+  it('exposes only off + max when only max is a variant', () => {
+    expect(buildThinkingLevelMap(['max'])).toEqual({
+      minimal: null,
+      low: null,
+      medium: null,
+      high: null,
+      max: 'max',
+    })
+  })
+
+  it('maps the full vocabulary to only the explicit extended entries', () => {
+    expect(buildThinkingLevelMap(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'])).toEqual({
+      xhigh: 'xhigh',
+      max: 'max',
+    })
+  })
+
+  it('returns undefined when only standard levels are present (empty map collapses)', () => {
+    expect(buildThinkingLevelMap(['minimal', 'low', 'medium', 'high'])).toBeUndefined()
+  })
+
+  it('ignores unknown names alongside known ones', () => {
+    expect(buildThinkingLevelMap(['turbo', 'high'])).toEqual({
+      minimal: null,
+      low: null,
+      medium: null,
+    })
   })
 })
 
@@ -167,9 +227,82 @@ describe('transformModel', () => {
     expect(result.name).toBe('test/model')
   })
 
-  it('always sets reasoning to false', () => {
+  it('defaults reasoning to false when field is absent', () => {
     const result = transformModel(baseModel)
     expect(result.reasoning).toBe(false)
+  })
+
+  it('omits thinkingLevelMap key for legacy payloads (no reasoning field)', () => {
+    const result = transformModel(baseModel)
+    expect('thinkingLevelMap' in result).toBe(false)
+  })
+
+  it('sets reasoning true with no variants: no map, supportsReasoningEffort true', () => {
+    const result = transformModel({ ...baseModel, reasoning: true })
+    expect(result.reasoning).toBe(true)
+    expect('thinkingLevelMap' in result).toBe(false)
+    expect(result.compat).toEqual({
+      supportsDeveloperRole: false,
+      supportsReasoningEffort: true,
+      maxTokensField: 'max_tokens',
+    })
+  })
+
+  it('builds thinkingLevelMap from variants', () => {
+    const result = transformModel({ ...baseModel, reasoning: true, variants: ['high', 'max'] })
+    expect(result.reasoning).toBe(true)
+    expect(result.thinkingLevelMap).toEqual({
+      minimal: null,
+      low: null,
+      medium: null,
+      max: 'max',
+    })
+    expect(result.compat!.supportsReasoningEffort).toBe(true)
+  })
+
+  it('warns and ignores unrecognized variant names, but keeps known ones', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const result = transformModel({
+      ...baseModel,
+      reasoning: true,
+      variants: ['turbo', 'high'],
+    })
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('unrecognized reasoning variant "turbo"')
+    )
+    expect(result.thinkingLevelMap).toEqual({ minimal: null, low: null, medium: null })
+    warn.mockRestore()
+  })
+
+  it('warns once per unrecognized name and no map when all variants are unknown', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const result = transformModel({ ...baseModel, reasoning: true, variants: ['turbo'] })
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect('thinkingLevelMap' in result).toBe(false)
+    warn.mockRestore()
+  })
+
+  it('does not warn for non-reasoning models with unknown variants', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const result = transformModel({ ...baseModel, reasoning: false, variants: ['turbo'] })
+    expect(warn).not.toHaveBeenCalled()
+    expect(result.reasoning).toBe(false)
+    warn.mockRestore()
+  })
+
+  it('llama.cpp backend + reasoning: merges backend compat and adds supportsReasoningEffort', () => {
+    const result = transformModel({
+      ...baseModel,
+      backend: 'llama.cpp',
+      reasoning: true,
+      variants: ['high'],
+    })
+    expect(result.compat).toEqual({
+      supportsDeveloperRole: false,
+      supportsReasoningEffort: true,
+      maxTokensField: 'max_tokens',
+      requiresToolResultName: false,
+    })
   })
 
   it('always sets cost to zero', () => {

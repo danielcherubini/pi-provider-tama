@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
   "name": "pi-provider-tama",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "description": "Pi agent extension for tama local AI server auto-discovery and model configuration",
   "type": "module",
   "main": "./src/index.ts",

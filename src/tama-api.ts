@@ -1,10 +1,17 @@
 import type { TamaModel, TamaModelsResponse, PiModel, PiProviderConfig, PiCompat } from './types'
+import type { ThinkingLevelMap } from '@earendil-works/pi-ai'
 
 const DEFAULT_TAMA_URL = 'http://127.0.0.1:11434'
 const TAMA_MODELS_ENDPOINT = '/v1/opencode/models'
 
 const DEFAULT_CONTEXT_WINDOW = 128000
 const DEFAULT_MAX_TOKENS = 8192
+
+/** pi thinking levels that are offered by default and must be explicitly nulled to hide. */
+const STANDARD_LEVELS = ['minimal', 'low', 'medium', 'high'] as const
+/** pi thinking levels that require an explicit string entry to be offered at all. */
+const EXTENDED_LEVELS = ['xhigh', 'max'] as const
+const KNOWN_LEVELS: readonly string[] = [...STANDARD_LEVELS, ...EXTENDED_LEVELS]
 
 /** Backend-specific compatibility overrides. */
 const BACKEND_COMPAT: Record<string, PiCompat> = {
@@ -137,6 +144,32 @@ export async function fetchTamaModels(baseURL: string = DEFAULT_TAMA_URL, token?
   }
 }
 
+/**
+ * Map tama's `variants` (named reasoning-effort overlays) to pi's thinkingLevelMap.
+ *
+ * Rules:
+ * - standard levels (minimal/low/medium/high) absent from variants → `null` (hidden)
+ * - standard levels present in variants → omitted (pi default sends the level name)
+ * - extended levels (xhigh/max) present in variants → explicit string value
+ * - extended levels absent → omitted (unsupported)
+ * - unknown names are ignored by the caller (which logs a warning)
+ * - undefined/empty input, or no recognizable names → undefined (no map)
+ */
+export function buildThinkingLevelMap(variants?: string[]): ThinkingLevelMap | undefined {
+  if (!variants || variants.length === 0) return undefined
+  const known = new Set(variants.filter((v) => KNOWN_LEVELS.includes(v)))
+  if (known.size === 0) return undefined
+
+  const map: ThinkingLevelMap = {}
+  for (const level of STANDARD_LEVELS) {
+    if (!known.has(level)) map[level] = null
+  }
+  for (const level of EXTENDED_LEVELS) {
+    if (known.has(level)) map[level] = level
+  }
+  return Object.keys(map).length > 0 ? map : undefined
+}
+
 /** Transform a single tama model into pi's model format. */
 export function transformModel(model: TamaModel): PiModel
 export function transformModel(model: TamaModel, baseUrl: string): PiModel & { baseUrl: string }
@@ -156,10 +189,25 @@ export function transformModel(model: TamaModel, baseUrl?: string): PiModel {
 
   const backendCompat = model.backend ? BACKEND_COMPAT[model.backend] : undefined
 
+  // Reasoning: expose tama variants as pi thinking levels. pi sends
+  // reasoning_effort only when model.reasoning && compat.supportsReasoningEffort.
+  const isReasoning = model.reasoning === true
+  if (isReasoning) {
+    for (const variant of model.variants ?? []) {
+      if (!KNOWN_LEVELS.includes(variant)) {
+        console.warn(
+          `[pi-provider-tama] Model ${model.id}: unrecognized reasoning variant "${variant}" — ignored`
+        )
+      }
+    }
+  }
+  const thinkingLevelMap = isReasoning ? buildThinkingLevelMap(model.variants) : undefined
+
   return {
     id: model.id,
     name: model.name || model.id,
-    reasoning: false,
+    reasoning: isReasoning,
+    ...(thinkingLevelMap ? { thinkingLevelMap } : {}),
     input,
     contextWindow,
     maxTokens,
@@ -169,7 +217,7 @@ export function transformModel(model: TamaModel, baseUrl?: string): PiModel {
       cacheRead: 0,
       cacheWrite: 0,
     },
-    compat: { ...DEFAULT_COMPAT, ...backendCompat },
+    compat: { ...DEFAULT_COMPAT, ...backendCompat, ...(isReasoning ? { supportsReasoningEffort: true } : {}) },
     provider: 'tama',
     api: 'openai-completions',
     ...(baseUrl ? { baseUrl } : {}),

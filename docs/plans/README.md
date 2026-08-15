@@ -4,9 +4,9 @@
 
 | Metric | Count |
 |--------|-------|
-| Total Plans | 3 |
+| Total Plans | 4 |
 | Completed | 3 |
-| Backlog | 0 |
+| Backlog | 1 |
 
 ## Completed Plans
 
@@ -18,4 +18,6 @@
 
 ## Backlog
 
-(No pending plans)
+| Plan | Description |
+|------|-------------|
+| [plan-004](./plan-004-reasoning-variants.md) | Reasoning & variants — parse tama's new `reasoning`/`variants` endpoint fields into pi thinking levels |
